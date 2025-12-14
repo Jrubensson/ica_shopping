@@ -102,6 +102,17 @@ async def async_setup_entry(hass, entry):
         nonlocal debounce_unsub
         data = event.data.get("service_data", {})
         service = event.data.get("service")
+        
+        entity_ids = data.get("entity_id", [])
+        keep_entity = entry.options.get("todo_entity_id", entry.data.get("todo_entity_id"))
+        
+        if isinstance(entity_ids, str):
+            entity_ids = [entity_ids]
+
+        # Ignorera event om det inte gäller vår todo-entity
+        if keep_entity not in entity_ids:
+            return
+
         # Lyssna på "status: completed" via update_item
         if service == "update_item":
             status = data.get("status")
@@ -134,9 +145,9 @@ async def async_setup_entry(hass, entry):
                 if debounce_unsub:
                     debounce_unsub()
                 debounce_unsub = async_call_later(hass, DEBOUNCE_SECONDS, schedule_sync)
-      
-        entity_ids = data.get("entity_id", [])
-        keep_entity = entry.options.get("todo_entity_id", entry.data.get("todo_entity_id"))
+            return  # Viktigt: avsluta här för update_item
+
+        # Hantera add_item och remove_item
         item = data.get("item")
         if isinstance(item, str):
             item = item.strip().lower()
@@ -145,10 +156,7 @@ async def async_setup_entry(hass, entry):
         else:
             item = None
 
-        if isinstance(entity_ids, str):
-            entity_ids = [entity_ids]
-
-        if keep_entity not in entity_ids or not item:
+        if not item:
             return
 
         # Spåra senaste add/remove från Keep
@@ -266,9 +274,12 @@ async def async_setup_entry(hass, entry):
                 _LOGGER.info("✅ Lagt till '%s' i Keep", item)
 
             # Ta bort från Keep det som inte finns i ICA
+            # VIKTIGT: Hoppa över items som nyss lagts till i Keep (recent_adds)
+            # så de inte tas bort innan de hunnit synkas till ICA
             to_remove_from_keep = [
                 i.get("summary") for i in keep_items
                 if i.get("summary", "").strip().lower() not in ica_items_lower
+                and i.get("summary", "").strip().lower() not in recent_adds
             ]
 
             for summary in to_remove_from_keep:
@@ -287,6 +298,13 @@ async def async_setup_entry(hass, entry):
                 if row_id:
                     await api.remove_item(row_id)
                     _LOGGER.info("❌ Tog bort '%s' från ICA (baserat på Keep-radering)", text)
+
+            # Lägg till i ICA det som nyss lagts till i Keep men inte finns i ICA ännu
+            for item in recent_adds:
+                if item not in ica_items_lower:
+                    success = await api.add_to_list(list_id, item)
+                    if success:
+                        _LOGGER.info("📥 Lade till '%s' i ICA (från recent_adds)", item)
 
             # Uppdatera sensor
             await _trigger_sensor_update(hass, list_id)
