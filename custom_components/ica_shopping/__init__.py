@@ -60,6 +60,8 @@ async def async_setup_entry(hass, entry):
         list_id = entry.options.get("ica_list_id", entry.data.get("ica_list_id"))
         keep_entity = entry.options.get("todo_entity_id", entry.data.get("todo_entity_id"))
 
+        # Set sync flag to prevent listener from tracking our own operations
+        hass.data[DOMAIN]["sync_in_progress"] = True
 
         _LOGGER.debug("🔁 Debounced Keep → ICA sync")
         try:
@@ -70,7 +72,7 @@ async def async_setup_entry(hass, entry):
             )
 
             items = result.get(keep_entity, {}).get("items", [])
-            summaries = [i.get("summary", "").strip() for i in items if isinstance(i, dict)]
+            summaries = [(i.get("summary") or "").strip() for i in items if isinstance(i, dict)]
             if len(summaries) > MAX_KEEP_ITEMS:
                 summaries = summaries[:MAX_KEEP_ITEMS]
 
@@ -80,7 +82,7 @@ async def async_setup_entry(hass, entry):
                 _LOGGER.error("🚫 ICA-listan full (%s). Inga varor tillagda.", len(rows))
                 return
 
-            existing = [r.get("text", "").strip().lower() for r in rows if isinstance(r, dict)]
+            existing = [(r.get("text") or "").strip().lower() for r in rows if isinstance(r, dict)]
             space = MAX_ICA_ITEMS - len(rows)
             to_add = [s for s in summaries if s.lower() not in existing][:space]
             
@@ -97,9 +99,18 @@ async def async_setup_entry(hass, entry):
                     
         except Exception as e:
             _LOGGER.error("💥 Fel vid sync_keep_to_ica: %s", e)
+        finally:
+            # Always reset sync flag
+            hass.data[DOMAIN]["sync_in_progress"] = False
 
     def call_service_listener(event):
         nonlocal debounce_unsub
+        
+        # Skip if sync is in progress (to avoid tracking our own sync operations)
+        if hass.data[DOMAIN].get("sync_in_progress", False):
+            _LOGGER.debug("⏭️ Ignorerar call_service under pågående sync")
+            return
+            
         data = event.data.get("service_data", {})
         service = event.data.get("service")
         
@@ -129,7 +140,7 @@ async def async_setup_entry(hass, entry):
                         lists = await api.fetch_lists()
                         rows = next((l.get("rows", []) for l in lists if l.get("id") == list_id), [])
                         ica_rows_dict = {
-                            row.get("text", "").strip().lower(): row.get("id")
+                            (row.get("text") or "").strip().lower(): row.get("id")
                             for row in rows if isinstance(row, dict)
                         }
                         row_id = ica_rows_dict.get(item)
@@ -173,12 +184,21 @@ async def async_setup_entry(hass, entry):
         debounce_unsub = async_call_later(hass, DEBOUNCE_SECONDS, schedule_sync)
 
 
-    hass.bus.async_listen("call_service", call_service_listener)
+    unsub_listener = hass.bus.async_listen("call_service", call_service_listener)
+
+    # Store cleanup references
+    hass.data[DOMAIN]["unsub_listener"] = unsub_listener
+    hass.data[DOMAIN]["debounce_unsub_getter"] = lambda: debounce_unsub
+    hass.data[DOMAIN]["sync_in_progress"] = False  # Flag to prevent listener during sync
 
     # --- Registrera refresh-tjänst ---
     async def handle_refresh(call):
 
         _LOGGER.debug("🔄 ICA refresh triggered via service")
+        
+        # Set sync flag to prevent listener from tracking our own operations
+        hass.data[DOMAIN]["sync_in_progress"] = True
+        
         try:
             remove_striked = entry.options.get("remove_striked", True)
             keep_entity = entry.options.get("todo_entity_id", entry.data.get("todo_entity_id"))
@@ -195,7 +215,7 @@ async def async_setup_entry(hass, entry):
                 checked_rows = [r for r in rows if r.get("isStriked") is True and r.get("id")]
                 for r in checked_rows:
                     await api.remove_item(r["id"])
-                    _LOGGER.info("🧹 Rensade avbockad vara '%s' från ICA", r.get("text", ""))
+                    _LOGGER.info("🧹 Rensade avbockad vara '%s' från ICA", r.get("text") or "")
                 rows = [r for r in rows if r.get("id") not in [cr["id"] for cr in checked_rows]]
             
             
@@ -203,10 +223,10 @@ async def async_setup_entry(hass, entry):
                 _LOGGER.error("🚫 ICA-listan är full (%s varor). Refresh stoppad.", len(rows))
                 return
 
-            ica_items = [row.get("text", "").strip() for row in rows if isinstance(row, dict)]
+            ica_items = [(row.get("text") or "").strip() for row in rows if isinstance(row, dict)]
             ica_items_lower = [x.lower() for x in ica_items]
             ica_rows_dict = {
-                row.get("text", "").strip().lower(): row.get("id")
+                (row.get("text") or "").strip().lower(): row.get("id")
                 for row in rows if isinstance(row, dict)
             }
 
@@ -216,13 +236,13 @@ async def async_setup_entry(hass, entry):
                 blocking=True, return_response=True
             )
             keep_items = result.get(keep_entity, {}).get("items", [])
-            keep_summaries = [i.get("summary", "").strip() for i in keep_items if isinstance(i, dict)]
+            keep_summaries = [(i.get("summary") or "").strip() for i in keep_items if isinstance(i, dict)]
             keep_lower = [x.lower() for x in keep_summaries]
 
 
             # 1️⃣ Hitta completed-items i Keep som fortfarande finns i ICA
             keep_completed = [
-                i.get("summary", "").strip().lower()
+                (i.get("summary") or "").strip().lower()
                 for i in keep_items
                 if i.get("status") == "completed"
             ]
@@ -278,8 +298,8 @@ async def async_setup_entry(hass, entry):
             # så de inte tas bort innan de hunnit synkas till ICA
             to_remove_from_keep = [
                 i.get("summary") for i in keep_items
-                if i.get("summary", "").strip().lower() not in ica_items_lower
-                and i.get("summary", "").strip().lower() not in recent_adds
+                if (i.get("summary") or "").strip().lower() not in ica_items_lower
+                and (i.get("summary") or "").strip().lower() not in recent_adds
             ]
 
             for summary in to_remove_from_keep:
@@ -318,6 +338,9 @@ async def async_setup_entry(hass, entry):
 
         except Exception as e:
             _LOGGER.error("💥 Fel vid refresh: %s", e)
+        finally:
+            # Always reset sync flag
+            hass.data[DOMAIN]["sync_in_progress"] = False
 
 
     hass.services.async_register(DOMAIN, "refresh", handle_refresh)
@@ -329,6 +352,38 @@ async def async_setup_entry(hass, entry):
     entry.async_on_unload(entry.add_update_listener(_options_update_listener))
 
     return True
+
+
+async def async_unload_entry(hass, entry):
+    """Unload a config entry."""
+    _LOGGER.debug("🔄 Unloading ICA Shopping integration")
+
+    # Cancel debounce timer if active
+    if "debounce_unsub_getter" in hass.data.get(DOMAIN, {}):
+        debounce_unsub = hass.data[DOMAIN]["debounce_unsub_getter"]()
+        if debounce_unsub:
+            debounce_unsub()
+
+    # Unsubscribe from event listener
+    if "unsub_listener" in hass.data.get(DOMAIN, {}):
+        hass.data[DOMAIN]["unsub_listener"]()
+
+    # Unload sensors
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, ["sensor"])
+
+    # Remove service
+    if hass.services.has_service(DOMAIN, "refresh"):
+        hass.services.async_remove(DOMAIN, "refresh")
+
+    # Clean up stored data
+    if DOMAIN in hass.data:
+        hass.data[DOMAIN].pop("unsub_listener", None)
+        hass.data[DOMAIN].pop("debounce_unsub_getter", None)
+        hass.data[DOMAIN].pop("recent_keep_adds", None)
+        hass.data[DOMAIN].pop("recent_keep_removes", None)
+        hass.data[DOMAIN].pop("sync_in_progress", None)
+
+    return unload_ok
 
 async def _options_update_listener(hass, entry):
     _LOGGER.debug("♻️ Optioner har ändrats, laddar om entry")

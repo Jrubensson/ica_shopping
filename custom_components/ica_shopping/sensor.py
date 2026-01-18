@@ -57,10 +57,10 @@ class ShoppingListSensor(SensorEntity):
         self._attr_native_value = len(items)
 
         attributes = {
-            "list_name": data.get("name", "")
+            "list_name": data.get("name") or ""
         }
         for i, item in enumerate(items, start=1):
-            attributes[f"vara_{i}"] = item.get("text", "")
+            attributes[f"vara_{i}"] = item.get("text") or ""
 
         self._attr_extra_state_attributes = attributes
 
