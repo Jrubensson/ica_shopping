@@ -24,7 +24,7 @@ Add Custom Repository:
 
 Open HACS in Home Assistant.
 Click on the ... in the top right corner and select Custom repositories.
-Add the URL https://github.com/mellamomax/ica_shopping/
+Add the URL https://github.com/jrubensson/ica_shopping/
 Set the category to Integration and click Add.
 Download the Integration and restart Home Assistant.
 
