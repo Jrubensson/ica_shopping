@@ -1,4 +1,5 @@
 import logging
+import time
 import yaml
 import aiohttp
 import aiofiles
@@ -9,14 +10,22 @@ from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
+TOKEN_CACHE_TTL = 300  # Cache token for 5 minutes
+
 class ICAApi:
     def __init__(self, hass, session_id):
         self.hass = hass
         self.session_id = session_id
+        self._cached_token = None
+        self._token_expires_at = 0
 
 
             
     async def _get_token_from_session_id(self):
+        # Return cached token if still valid
+        if self._cached_token and time.monotonic() < self._token_expires_at:
+            return self._cached_token
+
         headers = {
             "Cookie": f"thSessionId={self.session_id}",
             "Accept": "application/json"
@@ -28,6 +37,7 @@ class ICAApi:
                 async with session.get(url, headers=headers) as resp:
                     if resp.status != 200:
                         _LOGGER.error("❗ Misslyckades att hämta accessToken (%s)", resp.status)
+                        self._cached_token = None
 
                         ir.async_create_issue(
                             self.hass,
@@ -36,22 +46,25 @@ class ICAApi:
                             is_fixable=True,
                             severity=ir.IssueSeverity.ERROR,
                             translation_key="invalid_session_id"
-                        )   
+                        )
 
                         return None
 
                     data = await resp.json()
                     token = data.get("accessToken")
 
+                    # Cache the token
+                    self._cached_token = token
+                    self._token_expires_at = time.monotonic() + TOKEN_CACHE_TTL
 
                     # Ta bort eventuell aktiv issue om sessionen funkar igen
-
                     ir.async_delete_issue(self.hass, DOMAIN, "invalid_session_id")
 
                     return token
 
         except Exception as e:
             _LOGGER.error("❗ Fel vid hämtning av accessToken: %s", e)
+            self._cached_token = None
             return None
 
 

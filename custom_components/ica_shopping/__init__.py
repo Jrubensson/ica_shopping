@@ -329,17 +329,14 @@ async def async_setup_entry(hass, entry):
             # Uppdatera sensor
             await _trigger_sensor_update(hass, list_id)
 
-            # Rensa eventspårning efter allt är klart
+        except Exception as e:
+            _LOGGER.error("💥 Fel vid refresh: %s", e)
+        finally:
+            # Always clear tracking sets and reset sync flag, even on error
             if "recent_keep_adds" in hass.data[DOMAIN]:
                 hass.data[DOMAIN]["recent_keep_adds"].clear()
             if "recent_keep_removes" in hass.data[DOMAIN]:
                 hass.data[DOMAIN]["recent_keep_removes"].clear()
-
-
-        except Exception as e:
-            _LOGGER.error("💥 Fel vid refresh: %s", e)
-        finally:
-            # Always reset sync flag
             hass.data[DOMAIN]["sync_in_progress"] = False
 
 
