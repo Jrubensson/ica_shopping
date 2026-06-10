@@ -2,16 +2,9 @@
 
 Sync your ICA shopping lists with Home Assistant and your shopping/todo list in HA.
 
-This also works with Google Keep, which means you can add items to your shopping list
-using Google Assistant (voice) and have them automatically synced to your ICA shopping list
+The integration performs **bi-directional sync** between your configured HA todo entity and your ICA list: items added on either side are propagated to the other, and items removed (or marked as bought/completed) on either side are removed from both.
 
 ## Limitations at the Moment
-
-**Polling Interval (Google Keep):**  
-While changes made in Home Assistant are instantly reflected in Google Keep, the reverse is not immediate.  
-The integration polls Google Keep for updates every 15 minutes.  
-Changes made directly in Google Keep will appear in Home Assistant after the next polling cycle.
-[Read more about the limitations here.](https://github.com/watkins-matt/home-assistant-google-keep-sync?tab=readme-ov-file#limitations)
 
 **ICA API:**  
 Changes made to your ICA shopping list (e.g. via the ICA app or website) will **not** appear immediately in Home Assistant.  
@@ -34,7 +27,7 @@ Go to Settings -> Devices & Services.
 Click Add Integration.
 Search for and select Ica Shopping.
 5. Enter your `session_id` and `ica_list_id` which you want to add.
-6. (Optional) Link a `todo` entity to sync with Google Keep.
+6. Link a `todo` entity to sync with (any HA todo entity — the built-in shopping list, a custom todo integration, etc.).
 Submit
 
 ## How to Get Your `session_id`
