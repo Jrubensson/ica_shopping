@@ -1,12 +1,29 @@
 import logging
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.event import async_call_later
+from homeassistant.util import dt as dt_util
 from .const import DOMAIN, DATA_ICA
 from homeassistant.helpers import entity_registry
 
 from .ica_api import ICAApi
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _record_sync_result(hass, success: bool):
+    """Store the outcome of a sync run so the Last Sync sensor can report it.
+
+    Writes into hass.data[DOMAIN] (the same shared dict the sensors read from)
+    and fires a lightweight event so the sensor updates immediately without
+    triggering extra ICA API calls.
+    """
+    now = dt_util.utcnow()
+    data = hass.data.setdefault(DOMAIN, {})
+    data["last_run_time"] = now
+    data["last_run_status"] = "success" if success else "failed"
+    if success:
+        data["last_success_time"] = now
+    hass.bus.async_fire("ica_shopping_sync_recorded")
 
 async def _trigger_sensor_update(hass, list_id):
     registry = entity_registry.async_get(hass)  # ✅ utan await
@@ -95,10 +112,13 @@ async def async_setup_entry(hass, entry):
 
             if any_added:
                 await _trigger_sensor_update(hass, list_id)
-                    
-                    
+
+            _record_sync_result(hass, True)
+
+
         except Exception as e:
             _LOGGER.error("💥 Fel vid sync_keep_to_ica: %s", e)
+            _record_sync_result(hass, False)
         finally:
             # Always reset sync flag
             hass.data[DOMAIN]["sync_in_progress"] = False
@@ -207,6 +227,7 @@ async def async_setup_entry(hass, entry):
             the_list = next((l for l in lists if l.get("id") == list_id), None)
             if not the_list:
                 _LOGGER.warning("❌ Kunde inte hitta ICA-lista %s", list_id)
+                _record_sync_result(hass, False)
                 return
                 
             rows = the_list.get("rows", [])
@@ -329,8 +350,11 @@ async def async_setup_entry(hass, entry):
             # Uppdatera sensor
             await _trigger_sensor_update(hass, list_id)
 
+            _record_sync_result(hass, True)
+
         except Exception as e:
             _LOGGER.error("💥 Fel vid refresh: %s", e)
+            _record_sync_result(hass, False)
         finally:
             # Always clear tracking sets and reset sync flag, even on error
             if "recent_keep_adds" in hass.data[DOMAIN]:

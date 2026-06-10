@@ -1,6 +1,6 @@
 import logging
 from datetime import timedelta
-from homeassistant.components.sensor import SensorEntity
+from homeassistant.components.sensor import SensorEntity, SensorDeviceClass
 from .const import DOMAIN, DATA_ICA
 import asyncio  # lägg i toppen om inte redan finns
 from homeassistant.helpers.entity import EntityCategory
@@ -27,6 +27,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
     async_add_entities([
         ShoppingListSensor(hass, api, list_id, list_name),
         ICATokenSensor(hass, api, session_id, list_id, list_name),
+        ICALastSyncSensor(hass, list_id, list_name),
         #ICALastPurchaseSensor(hass, api, list_id, list_name, session_id)
     ], False)
 
@@ -219,3 +220,64 @@ class ICATokenSensor(SensorEntity):
     async def async_added_to_hass(self):
         await self.async_update()
         await self.async_update_ha_state(force_refresh=True)
+
+
+class ICALastSyncSensor(SensorEntity):
+    """Reports the timestamp of the last sync run and whether it succeeded.
+
+    State = time of the last run (success or failure).
+    Attributes:
+        status                -> "success" / "failed"
+        last_successful_sync  -> timestamp of the last successful run
+
+    Reads everything from hass.data[DOMAIN], which the sync logic in
+    __init__.py keeps up to date. A successful run means the ICA session
+    (thSessionId) was still valid at that time, so a stale "last successful
+    sync" combined with status "failed" is the signal to refresh the token.
+    """
+
+    def __init__(self, hass, list_id, list_name):
+        self.hass = hass
+        self._list_id = list_id
+        self._list_name = list_name
+
+        self._attr_unique_id = f"ica_last_sync_{list_id}"
+        self._attr_name = "Last Sync"
+        self._attr_device_class = SensorDeviceClass.TIMESTAMP
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        self._attr_has_entity_name = True
+        self._attr_native_value = None
+        self._attr_extra_state_attributes = {}
+
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, list_id)},
+            "name": f"ICA – {list_name}",
+            "manufacturer": "ICA",
+        }
+
+    def _refresh_from_data(self):
+        data = self.hass.data.get(DOMAIN, {})
+        self._attr_native_value = data.get("last_run_time")
+        self._attr_extra_state_attributes = {
+            "status": data.get("last_run_status"),
+            "last_successful_sync": data.get("last_success_time"),
+        }
+
+    async def async_update(self):
+        self._refresh_from_data()
+
+    async def async_added_to_hass(self):
+        async def handle_sync_recorded(event):
+            self._refresh_from_data()
+            self.async_write_ha_state()
+
+        self._unsub_dispatcher = self.hass.bus.async_listen(
+            "ica_shopping_sync_recorded", handle_sync_recorded
+        )
+
+        self._refresh_from_data()
+        self.async_write_ha_state()
+
+    async def async_will_remove_from_hass(self):
+        if hasattr(self, "_unsub_dispatcher"):
+            self._unsub_dispatcher()
