@@ -7,6 +7,20 @@
       }
     }
   },
+  "options": {
+    "step": {
+      "init": {
+        "title": "ICA Shopping – Konfiguration",
+        "description": "Uppdatera session ID (åtkomsttoken) när det har gått ut, eller ändra lista/inställningar. {warning_text}",
+        "data": {
+          "session_id": "Session ID (thSessionId / åtkomsttoken)",
+          "ica_list_id": "ICA list-ID",
+          "todo_entity_id": "Att göra-lista (entity)",
+          "remove_striked": "Rensa avbockade och klara varor"
+        }
+      }
+    }
+  },
   "issues": {
     "invalid_session_id": {
       "title": "Session ID är ogiltigt",

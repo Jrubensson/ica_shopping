@@ -7,6 +7,20 @@
       }
     }
   },
+  "options": {
+    "step": {
+      "init": {
+        "title": "ICA Shopping Configuration",
+        "description": "Update the session ID (access token) when it has expired, or change the list/options. {warning_text}",
+        "data": {
+          "session_id": "Session ID (thSessionId / access token)",
+          "ica_list_id": "ICA list ID",
+          "todo_entity_id": "To-do list entity",
+          "remove_striked": "Remove checked and completed items"
+        }
+      }
+    }
+  },
   "issues": {
     "invalid_session_id": {
       "title": "Session ID is invalid",

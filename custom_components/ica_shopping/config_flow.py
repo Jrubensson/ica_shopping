@@ -1,5 +1,5 @@
+import logging
 from homeassistant.core import callback
-from homeassistant import config_entries
 from homeassistant.config_entries import ConfigFlow, OptionsFlow
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.selector import selector
@@ -9,6 +9,8 @@ import voluptuous as vol
 from typing import Any
 from .const import DOMAIN
 
+_LOGGER = logging.getLogger(__name__)
+
 
 class ICAConfigFlow(ConfigFlow, domain=DOMAIN):
     VERSION = 1
@@ -16,7 +18,7 @@ class ICAConfigFlow(ConfigFlow, domain=DOMAIN):
     @staticmethod
     @callback
     def async_get_options_flow(config_entry):
-        return ICAOptionsFlowHandler(config_entry)
+        return ICAOptionsFlowHandler()
     
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         if user_input is not None:
@@ -41,8 +43,9 @@ class ICAConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
 class ICAOptionsFlowHandler(OptionsFlow):
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        self.config_entry = config_entry
+    # NB: do NOT define __init__ to set self.config_entry – modern Home Assistant
+    # provides it as a read-only property on the base class, and assigning to it
+    # raises AttributeError, which surfaces as a 500 when loading the options flow.
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         current_list_id = self.config_entry.options.get("ica_list_id", self.config_entry.data.get("ica_list_id", ""))
