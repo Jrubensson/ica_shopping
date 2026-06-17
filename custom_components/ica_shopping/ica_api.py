@@ -15,7 +15,15 @@ TOKEN_CACHE_TTL = 300  # Cache token for 5 minutes
 class ICAApi:
     def __init__(self, hass, session_id):
         self.hass = hass
-        self.session_id = session_id
+        # Trim whitespace/newlines – pasting the cookie often drags along a
+        # trailing space or newline, which produces a malformed Cookie header
+        # and a silent 401 from the API gateway.
+        self.session_id = (session_id or "").strip()
+        self._cached_token = None
+        self._token_expires_at = 0
+
+    def _invalidate_token(self):
+        """Drop the cached token so the next call re-fetches a fresh one."""
         self._cached_token = None
         self._token_expires_at = 0
 
@@ -36,7 +44,8 @@ class ICAApi:
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, headers=headers) as resp:
                     if resp.status != 200:
-                        _LOGGER.error("❗ Misslyckades att hämta accessToken (%s)", resp.status)
+                        body = await resp.text()
+                        _LOGGER.error("❗ Misslyckades att hämta accessToken (%s) – %s", resp.status, body)
                         self._cached_token = None
 
                         ir.async_create_issue(
@@ -52,6 +61,14 @@ class ICAApi:
 
                     data = await resp.json()
                     token = data.get("accessToken")
+                    if not token:
+                        # 200 men ingen accessToken – sessionen är ofta delvis
+                        # giltig (inloggad men utan API-token). Logga nycklarna
+                        # så det går att se vad som faktiskt returnerades.
+                        _LOGGER.error(
+                            "❗ /api/user/information gav 200 men ingen accessToken. Nycklar: %s",
+                            list(data.keys()) if isinstance(data, dict) else type(data),
+                        )
 
                     # Cache the token
                     self._cached_token = token
@@ -85,7 +102,13 @@ class ICAApi:
                 async with session.get(API_LIST_ALL, headers=headers) as resp:
                     _LOGGER.debug("📡 ICA API status: %s", resp.status)
                     if resp.status != 200:
-                        _LOGGER.error("❗ ICA API error: %s", resp.status)
+                        body = await resp.text()
+                        _LOGGER.error("❗ ICA API error: %s – %s", resp.status, body)
+                        # 401/403 = token rejected av gatewayen. Släng den cachade
+                        # token så nästa försök hämtar en ny (t.ex. efter att
+                        # session_id uppdaterats eller token hunnit bli stale).
+                        if resp.status in (401, 403):
+                            self._invalidate_token()
                         return []
 
                     result = await resp.json()
