@@ -28,6 +28,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
         ShoppingListSensor(hass, api, list_id, list_name),
         ICATokenSensor(hass, api, session_id, list_id, list_name),
         ICALastSyncSensor(hass, list_id, list_name),
+        ICASyncStatusSensor(hass, list_id, list_name),
         #ICALastPurchaseSensor(hass, api, list_id, list_name, session_id)
     ], False)
 
@@ -262,6 +263,58 @@ class ICALastSyncSensor(SensorEntity):
             "status": data.get("last_run_status"),
             "last_successful_sync": data.get("last_success_time"),
         }
+
+    async def async_update(self):
+        self._refresh_from_data()
+
+    async def async_added_to_hass(self):
+        async def handle_sync_recorded(event):
+            self._refresh_from_data()
+            self.async_write_ha_state()
+
+        self._unsub_dispatcher = self.hass.bus.async_listen(
+            "ica_shopping_sync_recorded", handle_sync_recorded
+        )
+
+        self._refresh_from_data()
+        self.async_write_ha_state()
+
+    async def async_will_remove_from_hass(self):
+        if hasattr(self, "_unsub_dispatcher"):
+            self._unsub_dispatcher()
+
+
+class ICASyncStatusSensor(SensorEntity):
+    """Exposes the last sync outcome as the state, for automations to trigger on.
+
+    State is "success" or "failed" (or unknown until the first run), unlike the
+    Last Sync sensor whose state is a timestamp. Reads the same shared keys in
+    hass.data[DOMAIN] and listens to the same event, so it stays in lock-step
+    with the Last Sync sensor.
+    """
+
+    def __init__(self, hass, list_id, list_name):
+        self.hass = hass
+        self._list_id = list_id
+        self._list_name = list_name
+
+        self._attr_unique_id = f"ica_sync_status_{list_id}"
+        self._attr_name = "Sync Status"
+        self._attr_device_class = SensorDeviceClass.ENUM
+        self._attr_options = ["success", "failed"]
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        self._attr_has_entity_name = True
+        self._attr_native_value = None
+
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, list_id)},
+            "name": f"ICA – {list_name}",
+            "manufacturer": "ICA",
+        }
+
+    def _refresh_from_data(self):
+        data = self.hass.data.get(DOMAIN, {})
+        self._attr_native_value = data.get("last_run_status")
 
     async def async_update(self):
         self._refresh_from_data()

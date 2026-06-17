@@ -93,3 +93,31 @@ actions:
 mode: single
 
 ```
+
+## Detecting Sync Failures (Expired Token)
+
+Your `session_id` (`thSessionId`) is only valid for ~3 months. When it expires, syncs start failing silently. The integration exposes a **Sync Status** sensor whose state is `success` or `failed`, so you can be notified the moment a sync fails and know it's time to refresh the token.
+
+The entity id depends on your list name — check **Settings → Devices & Services → ICA Shopping → the device** to find it (e.g. `sensor.ica_handlingslista_sync_status`).
+
+```yaml
+automation:
+  - alias: "Notify when ICA sync fails"
+    trigger:
+      - platform: state
+        entity_id: sensor.ica_handlingslista_sync_status
+        to: "failed"
+    action:
+      - service: notify.notify
+        data:
+          title: "ICA Shopping sync failed"
+          message: >
+            The ICA sync failed — your session token has likely expired.
+            Open the integration and update the session_id.
+```
+
+> **Tip:** trigger on `to: "failed"` rather than "not success", so the automation doesn't fire on the brief `unknown` state after a Home Assistant restart.
+
+Two related diagnostic sensors are also available on the same device:
+- **Last Sync** — timestamp of the last run, with `status` and `last_successful_sync` attributes (handy to see how long ago the session was last valid).
+- **Access Token** — the live access token (or `❌` when the session can't be authenticated).
