@@ -192,18 +192,19 @@ class ICAApi:
         session = async_create_clientsession(
             self.hass, auto_cleanup=False, cookie_jar=aiohttp.CookieJar()
         )
-        session.headers["User-Agent"] = USER_AGENT
+        # HA freezes a created session's default headers, so the UA goes on each request.
+        ua = {"User-Agent": USER_AGENT}
         try:
             async with session.post(TOKEN_ENDPOINT, data={
                 "client_id": DCR_CLIENT_ID, "client_secret": DCR_CLIENT_SECRET,
                 "grant_type": "client_credentials", "scope": "dcr", "response_type": "token",
-            }, timeout=TIMEOUT) as resp:
+            }, headers=ua, timeout=TIMEOUT) as resp:
                 await _check(resp, "bootstrap token")
                 bootstrap = (await resp.json())["access_token"]
 
             async with session.post(
                 REGISTER_ENDPOINT, json={"software_id": DCR_SOFTWARE_ID},
-                headers={"Authorization": f"Bearer {bootstrap}"}, timeout=TIMEOUT,
+                headers={**ua, "Authorization": f"Bearer {bootstrap}"}, timeout=TIMEOUT,
             ) as resp:
                 await _check(resp, "client registration")
                 client = await resp.json()
@@ -214,17 +215,17 @@ class ICAApi:
                 "redirect_uri": REDIRECT_URI, "response_type": "code",
                 "code_challenge": challenge, "code_challenge_method": "S256",
                 "prompt": "login", "acr": ACR,
-            }, allow_redirects=False, timeout=TIMEOUT) as resp:
+            }, allow_redirects=False, headers=ua, timeout=TIMEOUT) as resp:
                 await _check(resp, "authorize")
                 location = urljoin(AUTHORIZE_ENDPOINT, resp.headers["Location"])
             state = _query_param(location, "state")
 
-            async with session.get(location, timeout=TIMEOUT) as resp:
+            async with session.get(location, headers=ua, timeout=TIMEOUT) as resp:
                 await _check(resp, "login page")
 
             async with session.post(LOGIN_ENDPOINT, data={
                 "userName": self.username, "password": self.password,
-            }, timeout=TIMEOUT) as resp:
+            }, headers=ua, timeout=TIMEOUT) as resp:
                 await _check(resp, "authenticate")
                 sso_token = _hidden_field(await resp.text(), "token")
 
@@ -232,7 +233,7 @@ class ICAApi:
                 AUTHORIZE_ENDPOINT,
                 params={"client_id": client["client_id"], "forceAuthN": "true", "acr": ACR},
                 data={"token": sso_token, "state": state},
-                allow_redirects=False, timeout=TIMEOUT,
+                allow_redirects=False, headers=ua, timeout=TIMEOUT,
             ) as resp:
                 await _check(resp, "authorize code")
                 code = _query_param(resp.headers.get("Location", ""), "code")
@@ -243,7 +244,7 @@ class ICAApi:
                 "grant_type": "authorization_code", "scope": client["scope"],
                 "response_type": "token", "code_verifier": verifier,
                 "redirect_uri": REDIRECT_URI,
-            }, timeout=TIMEOUT) as resp:
+            }, headers=ua, timeout=TIMEOUT) as resp:
                 await _check(resp, "token exchange")
                 token = await resp.json()
         except (aiohttp.ClientError, asyncio.TimeoutError) as err:
@@ -251,7 +252,8 @@ class ICAApi:
         except KeyError as err:
             raise IcaAuthError(f"Unexpected ICA login response, missing {err}") from err
         finally:
-            await session.close()
+            # close() would shut HA's shared connector; detach() is the documented release.
+            session.detach()
 
         self._state = {"client": client, "token": _stamp(token)}
         self._save_state()
