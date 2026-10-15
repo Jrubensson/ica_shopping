@@ -34,6 +34,7 @@ from .const import (
     DCR_CLIENT_SECRET,
     DCR_SOFTWARE_ID,
     LOGIN_ENDPOINT,
+    RECIPE_PATH,
     REDIRECT_URI,
     REGISTER_ENDPOINT,
     SL_PATH,
@@ -355,6 +356,28 @@ class ICAApi:
 
     async def _sync(self, list_offline_id: str, payload: dict) -> Any:
         return await self._request("POST", f"{SL_PATH}/{list_offline_id}/sync", payload)
+
+    async def async_create_list(self, title: str) -> dict:
+        offline_id = str(uuid.uuid4()).upper()
+        await self._request("POST", SL_PATH, {
+            "offlineId": offline_id, "title": title, "commentText": "",
+            "sortingStore": 0, "rows": [], "latestChange": _ts(),
+        })
+        return await self.async_get_list(offline_id) or {"id": offline_id, "name": title, "rows": []}
+
+    async def async_get_random_recipe(self) -> dict | None:
+        # numberofrecipes is ignored; the endpoint always returns one recipe.
+        data = await self._request("GET", f"{RECIPE_PATH}/recipes/random?numberofrecipes=1")
+        if isinstance(data, list):
+            return data[0] if data and isinstance(data[0], dict) else None
+        return data if isinstance(data, dict) and data.get("id") else None
+
+    async def async_get_favorite_recipe_ids(self) -> list:
+        data = await self._request("GET", f"{RECIPE_PATH}/favorites") or {}
+        return [f["recipeId"] for f in data.get("favorites", []) if isinstance(f, dict) and f.get("recipeId")]
+
+    async def async_get_recipe(self, recipe_id) -> dict:
+        return await self._request("GET", f"{RECIPE_PATH}/recipes/{recipe_id}?api-version=2.0") or {}
 
     # --------------------------------------- non-raising (used by sync/sensors)
     async def fetch_lists(self) -> list[dict]:

@@ -5,7 +5,9 @@ Uses Home Assistant's real aiohttp helpers, so session quirks behave as in HA.
     uv run --python 3.13 --with homeassistant scripts/test_ica_login.py
     uv run --python 3.13 --with homeassistant scripts/test_ica_login.py --dry-run
 
---dry-run stops before credentials are sent. --write-test adds, strikes, unstrikes and removes a probe item. Credentials are prompted for and never stored.
+--dry-run stops before credentials are sent. --write-test adds, strikes, unstrikes and removes a probe item.
+--recipes fetches 2 random recipes and your favorites and prints the merged ingredients, without writing anything.
+Credentials are prompted for and never stored.
 """
 from __future__ import annotations
 
@@ -27,12 +29,51 @@ from homeassistant.core import HomeAssistant
 INTEGRATION_DIR = Path(__file__).resolve().parent.parent / "custom_components" / "ica_shopping"
 
 
+PKG = "ica_shopping_under_test"
+
+
 def load_ica_api():
     # Import ica_api without running the integration's __init__ (which needs a full HA setup).
-    pkg = types.ModuleType("ica_shopping_under_test")
+    pkg = types.ModuleType(PKG)
     pkg.__path__ = [str(INTEGRATION_DIR)]
     sys.modules[pkg.__name__] = pkg
     return importlib.import_module(f"{pkg.__name__}.ica_api")
+
+
+async def recipe_test(api) -> None:
+    recipes_mod = importlib.import_module(f"{PKG}.recipes")
+    const = importlib.import_module(f"{PKG}.const")
+
+    print("Fetching 2 random recipes …")
+    recipes = await recipes_mod.async_fetch_recipes(api, 2, recipes_mod.SOURCE_RANDOM)
+    assert recipes, "no random recipes returned"
+    for r in recipes:
+        d = recipes_mod.dinner_summary(r)
+        print(f"  • {d['title']}  (cookingTime={d['cooking_time']!r})")
+        print(f"    url: {d['url']}")
+    print(f"  recipe fields: {sorted(recipes[0])}")
+    url_fields = [k for k in ("url", "absoluteUrl", "shareUrl", "webUrl") if recipes[0].get(k)]
+    print(f"  url source: {url_fields[0] if url_fields else 'built from title (open it to check)'}")
+
+    skip = {recipes_mod.norm(n) for n in const.DEFAULT_NEVER_ADD}
+    merged = recipes_mod.aggregate_ingredients(recipes)
+    print(f"Merged ingredients ({len(merged)}):")
+    for ing in merged:
+        mark = "  (never add)" if recipes_mod.norm(ing["name"]) in skip else ""
+        print(f"  - {ing['text']}{mark}")
+    assert merged, "recipes had no ingredients"
+    print("✓ Random recipes work.")
+
+    print("Fetching favorite recipes …")
+    ids = await api.async_get_favorite_recipe_ids()
+    print(f"  {len(ids)} favorite(s).")
+    if ids:
+        fav = await api.async_get_recipe(ids[0])
+        print(f"  • {fav.get('title')}  ({len(list(recipes_mod._ingredients(fav)))} ingredients)")
+        assert fav.get("title"), "favorite recipe detail had no title"
+        print("✓ Favorites and recipe detail work.")
+    else:
+        print("  (save a recipe in the ICA app to test source: favorites)")
 
 
 def trace_config() -> aiohttp.TraceConfig:
@@ -53,7 +94,7 @@ def trace_config() -> aiohttp.TraceConfig:
     return tc
 
 
-async def main(dry_run: bool, write_test: bool) -> int:
+async def main(dry_run: bool, write_test: bool, recipes: bool) -> int:
     ica_api = load_ica_api()
 
     import homeassistant.helpers.aiohttp_client as ha_client
@@ -166,6 +207,9 @@ async def main(dry_run: bool, write_test: bool) -> int:
             after_remove = await api.async_get_list(target["id"])
             assert not any(r["text"] == probe for r in after_remove["rows"]), "row still present"
             print("✓ Removed. Add, strike, unstrike and remove all work.")
+
+        if recipes:
+            await recipe_test(api)
         if "session" in shared:
             shared["session"].detach()
         await hass.async_stop(force=True)
@@ -177,7 +221,9 @@ if __name__ == "__main__":
     parser.add_argument("--dry-run", action="store_true", help="stop before sending credentials")
     parser.add_argument("--write-test", action="store_true",
                         help="add a probe item to your first list, strike and unstrike it, then remove it")
+    parser.add_argument("--recipes", action="store_true",
+                        help="fetch 2 random recipes and print the merged ingredients (read-only)")
     parser.add_argument("-v", "--verbose", action="store_true", help="show the integration's debug logs")
     args = parser.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.WARNING)
-    sys.exit(asyncio.run(main(args.dry_run, args.write_test)))
+    sys.exit(asyncio.run(main(args.dry_run, args.write_test, args.recipes)))

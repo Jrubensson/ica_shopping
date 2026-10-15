@@ -102,6 +102,46 @@ mode: single
 
 ```
 
+## Planning Dinners from ICA Recipes
+
+`ica_shopping.plan_dinners` picks ICA recipes, merges their ingredients (`2 dl` + `3 dl mjölk` → `5 dl mjölk`) and adds them to a shopping list.
+
+| Field | Default | |
+|---|---|---|
+| `count` | `5` | Number of dinners, 1–10 |
+| `source` | `random` | `random` ICA recipes, or `favorites` saved in the ICA app |
+| `list` | the synced list | ICA list name; a name that doesn't exist is created |
+
+Ingredients already on the list are skipped, as are pantry staples listed under **Never add from recipes** in the integration's options (default: salt, peppar, svartpeppar, vatten, olja, olivolja, smör).
+
+The action returns the menu, so an automation can send it to your phone:
+
+```yaml
+automation:
+  - alias: "Weekly dinner plan"
+    trigger:
+      - trigger: time
+        at: "09:00:00"
+    condition:
+      - condition: time
+        weekday: sun
+    action:
+      - action: ica_shopping.plan_dinners
+        data:
+          count: 5
+          source: favorites
+        response_variable: plan
+      - action: notify.mobile_app_your_phone
+        data:
+          title: "This week's dinners"
+          message: >
+            {% for d in plan.dinners %}• {{ d.title }}{% if d.cooking_time %} ({{ d.cooking_time }}){% endif %}
+            {% endfor %}
+            {{ plan.added | count }} items added to {{ plan.list }}.
+```
+
+The response looks like `{"list": "Handla", "dinners": [{"title": …, "cooking_time": …, "url": …}], "added": ["5 dl mjölk", …]}`.
+
 ## Detecting Sync Failures
 
 The integration exposes a **Sync Status** sensor whose state is `success` or `failed`, so you can be notified when a sync fails (for example if ICA is unreachable or the login needs to be renewed).

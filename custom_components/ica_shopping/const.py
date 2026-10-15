@@ -5,6 +5,9 @@ CONF_AUTH = "auth"
 CONF_LIST_ID = "ica_list_id"
 CONF_TODO_ENTITY = "todo_entity_id"
 CONF_REMOVE_STRIKED = "remove_striked"
+CONF_NEVER_ADD = "never_add"
+
+DEFAULT_NEVER_ADD = ["salt", "peppar", "svartpeppar", "vatten", "olja", "olivolja", "smör"]
 
 IMS_BASE = "https://ims.icagruppen.se"
 API_BASE = "https://apimgw-pub.ica.se"
@@ -22,6 +25,7 @@ REDIRECT_URI = "icacurity://app"
 ACR = "urn:se:curity:authentication:html-form:IcaCustomers"
 
 SL_PATH = "sverige/digx/mobile/shoppinglistservice/v1/shoppinglists"
+RECIPE_PATH = "sverige/digx/mobile/recipeservice/v1"
 
 USER_AGENT = (
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) "

@@ -13,3 +13,25 @@ refresh:
 
 clear_checked:
   description: "Sync, then delete checked-off rows from the ICA list and completed items from the to-do list"
+
+plan_dinners:
+  fields:
+    count:
+      default: 5
+      selector:
+        number:
+          min: 1
+          max: 10
+          mode: box
+    source:
+      default: random
+      selector:
+        select:
+          translation_key: plan_dinners_source
+          options:
+            - random
+            - favorites
+    list:
+      example: "Veckans middagar"
+      selector:
+        text:

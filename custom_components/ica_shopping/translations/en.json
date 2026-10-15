@@ -53,7 +53,11 @@
         "data": {
           "ica_list_id": "ICA shopping list",
           "todo_entity_id": "To-do list entity",
-          "remove_striked": "Clear checked items after every sync"
+          "remove_striked": "Clear checked items after every sync",
+          "never_add": "Never add from recipes"
+        },
+        "data_description": {
+          "never_add": "Pantry staples that ica_shopping.plan_dinners skips, matched on the ingredient name."
         }
       }
     }
@@ -61,6 +65,12 @@
   "exceptions": {
     "not_logged_in": {
       "message": "ICA Shopping is not logged in. Re-authenticate under Settings → Devices & Services → ICA Shopping."
+    },
+    "no_recipes": {
+      "message": "ICA returned no recipes (source: {source}). Favorites need at least one saved recipe in the ICA app."
+    },
+    "plan_dinners_failed": {
+      "message": "Planning dinners failed: {error}"
     }
   },
   "services": {
@@ -71,6 +81,32 @@
     "clear_checked": {
       "name": "Clear checked items",
       "description": "Sync, then delete checked-off rows from the ICA list and completed items from the to-do list."
+    },
+    "plan_dinners": {
+      "name": "Plan dinners",
+      "description": "Pick ICA recipes and add their merged ingredients to a shopping list. Returns the menu.",
+      "fields": {
+        "count": {
+          "name": "Number of dinners",
+          "description": "How many recipes to pick (1–10)."
+        },
+        "source": {
+          "name": "Source",
+          "description": "Random ICA recipes, or recipes you have saved as favorites in the ICA app."
+        },
+        "list": {
+          "name": "List",
+          "description": "ICA list name. Defaults to the synced list; a name that doesn't exist is created."
+        }
+      }
+    }
+  },
+  "selector": {
+    "plan_dinners_source": {
+      "options": {
+        "random": "Random",
+        "favorites": "Favorites"
+      }
     }
   }
 }

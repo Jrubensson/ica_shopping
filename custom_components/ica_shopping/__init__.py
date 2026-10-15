@@ -2,7 +2,10 @@ import asyncio
 import logging
 from typing import Iterable
 
+import voluptuous as vol
+
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
+from homeassistant.core import ServiceCall, ServiceResponse, SupportsResponse
 from homeassistant.exceptions import (
     ConfigEntryAuthFailed,
     ConfigEntryNotReady,
@@ -18,12 +21,21 @@ from homeassistant.helpers import issue_registry as ir
 from .const import (
     CONF_AUTH,
     CONF_LIST_ID,
+    CONF_NEVER_ADD,
     CONF_REMOVE_STRIKED,
     CONF_TODO_ENTITY,
     DOMAIN,
     DATA_ICA,
+    DEFAULT_NEVER_ADD,
 )
-from .ica_api import ICAApi, IcaAuthError, IcaError
+from .ica_api import ICAApi, IcaAuthError, IcaError, list_matches
+from .recipes import (
+    SOURCE_FAVORITES,
+    SOURCE_RANDOM,
+    NoRecipesError,
+    async_plan_dinners,
+    norm as _norm,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -49,10 +61,6 @@ STORAGE_VERSION = 1
 STORAGE_KEY = "ica_shopping_sync_state"
 MAX_ICA_ITEMS = 250
 DEBOUNCE_SECONDS = 1
-
-
-def _norm(text):
-    return (text or "").strip().lower()
 
 
 async def _load_snapshot(hass) -> dict:
@@ -354,6 +362,50 @@ async def async_setup(hass, config):
 
     hass.services.async_register(DOMAIN, "refresh", handle_refresh)
     hass.services.async_register(DOMAIN, "clear_checked", handle_clear_checked)
+
+    async def handle_plan_dinners(call: ServiceCall) -> ServiceResponse:
+        sync = _sync_or_raise()
+        data = hass.data[DOMAIN]
+        default_list_id = data["current_list_id"]
+        options = data.get("current_options") or {}
+        try:
+            target, result = await async_plan_dinners(
+                data[DATA_ICA],
+                count=call.data["count"],
+                source=call.data["source"],
+                list_ref=call.data.get("list"),
+                default_list_id=default_list_id,
+                never_add=options.get(CONF_NEVER_ADD, DEFAULT_NEVER_ADD),
+            )
+        except NoRecipesError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="no_recipes",
+                translation_placeholders={"source": call.data["source"]},
+            ) from err
+        except IcaError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="plan_dinners_failed",
+                translation_placeholders={"error": str(err)},
+            ) from err
+
+        if result["added"] and list_matches(target, default_list_id):
+            # Push the new rows to the to-do entity now instead of on the next refresh.
+            await sync()
+        return result
+
+    hass.services.async_register(
+        DOMAIN,
+        "plan_dinners",
+        handle_plan_dinners,
+        schema=vol.Schema({
+            vol.Optional("count", default=5): vol.All(vol.Coerce(int), vol.Range(min=1, max=10)),
+            vol.Optional("source", default=SOURCE_RANDOM): vol.In([SOURCE_RANDOM, SOURCE_FAVORITES]),
+            vol.Optional("list"): cv.string,
+        }),
+        supports_response=SupportsResponse.OPTIONAL,
+    )
     return True
 
 

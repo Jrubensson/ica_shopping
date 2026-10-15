@@ -53,7 +53,11 @@
         "data": {
           "ica_list_id": "ICA-inköpslista",
           "todo_entity_id": "Att göra-lista (entity)",
-          "remove_striked": "Rensa avbockade varor efter varje synk"
+          "remove_striked": "Rensa avbockade varor efter varje synk",
+          "never_add": "Lägg aldrig till från recept"
+        },
+        "data_description": {
+          "never_add": "Basvaror som ica_shopping.plan_dinners hoppar över, matchat på ingrediensnamnet."
         }
       }
     }
@@ -61,6 +65,12 @@
   "exceptions": {
     "not_logged_in": {
       "message": "ICA Shopping är inte inloggad. Logga in igen under Inställningar → Enheter och tjänster → ICA Shopping."
+    },
+    "no_recipes": {
+      "message": "ICA returnerade inga recept (källa: {source}). Favoriter kräver minst ett sparat recept i ICA-appen."
+    },
+    "plan_dinners_failed": {
+      "message": "Middagsplaneringen misslyckades: {error}"
     }
   },
   "services": {
@@ -71,6 +81,32 @@
     "clear_checked": {
       "name": "Rensa avbockade varor",
       "description": "Synka och ta sedan bort avbockade rader från ICA-listan och klara poster från att göra-listan."
+    },
+    "plan_dinners": {
+      "name": "Planera middagar",
+      "description": "Välj ICA-recept och lägg till deras sammanslagna ingredienser på en inköpslista. Returnerar menyn.",
+      "fields": {
+        "count": {
+          "name": "Antal middagar",
+          "description": "Hur många recept som ska väljas (1–10)."
+        },
+        "source": {
+          "name": "Källa",
+          "description": "Slumpade ICA-recept eller recept du sparat som favoriter i ICA-appen."
+        },
+        "list": {
+          "name": "Lista",
+          "description": "Namn på ICA-lista. Standard är den synkade listan; ett namn som inte finns skapas."
+        }
+      }
+    }
+  },
+  "selector": {
+    "plan_dinners_source": {
+      "options": {
+        "random": "Slumpade",
+        "favorites": "Favoriter"
+      }
     }
   }
 }

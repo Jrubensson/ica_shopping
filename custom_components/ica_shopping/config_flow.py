@@ -22,9 +22,11 @@ from homeassistant.helpers.selector import (
 from .const import (
     CONF_AUTH,
     CONF_LIST_ID,
+    CONF_NEVER_ADD,
     CONF_REMOVE_STRIKED,
     CONF_TODO_ENTITY,
     DATA_ICA,
+    DEFAULT_NEVER_ADD,
     DOMAIN,
 )
 from .ica_api import (
@@ -40,6 +42,7 @@ _LOGGER = logging.getLogger(__name__)
 
 PASSWORD_SELECTOR = TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD))
 TODO_SELECTOR = EntitySelector(EntitySelectorConfig(domain="todo"))
+NEVER_ADD_SELECTOR = TextSelector(TextSelectorConfig(multiple=True))
 
 
 def _credentials_schema(username: str = "") -> vol.Schema:
@@ -229,5 +232,9 @@ class ICAOptionsFlowHandler(OptionsFlow):
                     CONF_REMOVE_STRIKED,
                     default=entry.options.get(CONF_REMOVE_STRIKED, entry.data.get(CONF_REMOVE_STRIKED, False)),
                 ): BooleanSelector(),
+                vol.Optional(
+                    CONF_NEVER_ADD,
+                    default=entry.options.get(CONF_NEVER_ADD, DEFAULT_NEVER_ADD),
+                ): NEVER_ADD_SELECTOR,
             }),
         )
