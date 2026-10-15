@@ -111,10 +111,14 @@ mode: single
 | `count` | `5` | Number of dinners, 1–10 |
 | `source` | `random` | `random` ICA recipes, or `favorites` saved in the ICA app |
 | `list` | the synced list | ICA list name; a name that doesn't exist is created |
+| `calendar` | – | Calendar entity; adds one all-day event per dinner on consecutive days |
+| `start_date` | tomorrow | Day of the first dinner in the calendar |
 
 Ingredients already on the list are skipped, as are pantry staples listed under **Never add from recipes** in the integration's options (default: salt, peppar, svartpeppar, vatten, olja, olivolja, smör).
 
-The action returns the menu, so an automation can send it to your phone:
+Each calendar event has the recipe title as its name and the cooking time, recipe link and ingredients in its description. The calendar must support creating events (Local Calendar, Google Calendar and CalDAV do); otherwise the action fails before anything is added to the ICA list.
+
+This automation plans Monday–Friday every Sunday morning, puts the dinners in a calendar and sends the menu to your phone:
 
 ```yaml
 automation:
@@ -130,17 +134,18 @@ automation:
         data:
           count: 5
           source: favorites
+          calendar: calendar.dinners
         response_variable: plan
       - action: notify.mobile_app_your_phone
         data:
           title: "This week's dinners"
           message: >
-            {% for d in plan.dinners %}• {{ d.title }}{% if d.cooking_time %} ({{ d.cooking_time }}){% endif %}
+            {% for d in plan.dinners %}• {{ as_datetime(d.date).strftime('%a') }}: {{ d.title }}{% if d.cooking_time %} ({{ d.cooking_time }}){% endif %}
             {% endfor %}
             {{ plan.added | count }} items added to {{ plan.list }}.
 ```
 
-The response looks like `{"list": "Handla", "dinners": [{"title": …, "cooking_time": …, "url": …}], "added": ["5 dl mjölk", …]}`.
+The response looks like `{"list": "Handla", "dinners": [{"title": …, "cooking_time": …, "url": …, "date": "2026-10-19"}], "added": ["5 dl mjölk", …]}`; `date` is only included when `calendar` is set.
 
 ## Detecting Sync Failures
 

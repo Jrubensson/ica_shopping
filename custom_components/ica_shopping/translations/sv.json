@@ -71,6 +71,9 @@
     },
     "plan_dinners_failed": {
       "message": "Middagsplaneringen misslyckades: {error}"
+    },
+    "calendar_not_writable": {
+      "message": "{entity_id} kan inte skapa händelser. Välj en kalender som stödjer nya händelser, t.ex. Local Calendar, Google Calendar eller CalDAV."
     }
   },
   "services": {
@@ -97,6 +100,14 @@
         "list": {
           "name": "Lista",
           "description": "Namn på ICA-lista. Standard är den synkade listan; ett namn som inte finns skapas."
+        },
+        "calendar": {
+          "name": "Kalender",
+          "description": "Valfritt. Lägger in en heldagshändelse per middag på dagarna i följd, med tillagningstid, receptlänk och ingredienser."
+        },
+        "start_date": {
+          "name": "Startdatum",
+          "description": "Dagen för första middagen i kalendern. Standard är i morgon."
         }
       }
     }

@@ -71,6 +71,9 @@
     },
     "plan_dinners_failed": {
       "message": "Planning dinners failed: {error}"
+    },
+    "calendar_not_writable": {
+      "message": "{entity_id} can't create events. Pick a calendar that supports new events, such as Local Calendar, Google Calendar or CalDAV."
     }
   },
   "services": {
@@ -97,6 +100,14 @@
         "list": {
           "name": "List",
           "description": "ICA list name. Defaults to the synced list; a name that doesn't exist is created."
+        },
+        "calendar": {
+          "name": "Calendar",
+          "description": "Optional. Adds one all-day event per dinner on consecutive days, with the cooking time, recipe link and ingredients."
+        },
+        "start_date": {
+          "name": "Start date",
+          "description": "Day of the first dinner in the calendar. Defaults to tomorrow."
         }
       }
     }

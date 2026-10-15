@@ -73,6 +73,13 @@ def recipe_url(recipe: dict) -> str | None:
     return f"{RECIPE_WEB_BASE}/recept/{slug}-{recipe_id}/"
 
 
+def event_description(recipe: dict) -> str:
+    parts = [str(p) for p in (recipe.get("cookingTime"), recipe_url(recipe)) if p]
+    lines = [(ing.get("text") or "").strip() for ing in _ingredients(recipe)]
+    lines = [f"• {line}" for line in lines if line]
+    return "\n\n".join(p for p in ("\n".join(parts), "\n".join(lines)) if p)
+
+
 def dinner_summary(recipe: dict) -> dict:
     return {
         "title": recipe.get("title"),
@@ -121,8 +128,8 @@ async def async_plan_dinners(
     list_ref: str | None,
     default_list_id: str,
     never_add: Iterable[str],
-) -> tuple[dict, dict]:
-    """Return (target list, service response)."""
+) -> tuple[dict, list[dict], dict]:
+    """Return (target list, recipes, service response)."""
     recipes = await async_fetch_recipes(api, count, source)
     if not recipes:
         raise NoRecipesError(f"No {source} recipes returned")
@@ -140,7 +147,7 @@ async def async_plan_dinners(
         if await api.add_to_list(target["id"], ing["text"]):
             added.append(ing["text"])
 
-    return target, {
+    return target, recipes, {
         "list": target.get("name"),
         "dinners": [dinner_summary(r) for r in recipes],
         "added": added,

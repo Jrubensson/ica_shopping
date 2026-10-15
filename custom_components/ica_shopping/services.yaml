@@ -35,3 +35,10 @@ plan_dinners:
       example: "Veckans middagar"
       selector:
         text:
+    calendar:
+      selector:
+        entity:
+          domain: calendar
+    start_date:
+      selector:
+        date:

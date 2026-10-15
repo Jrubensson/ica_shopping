@@ -1,10 +1,12 @@
 import asyncio
+import datetime as dt
 import logging
 from typing import Iterable
 
 import voluptuous as vol
 
-from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
+from homeassistant.components.calendar import CalendarEntityFeature
+from homeassistant.const import ATTR_SUPPORTED_FEATURES, CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import ServiceCall, ServiceResponse, SupportsResponse
 from homeassistant.exceptions import (
     ConfigEntryAuthFailed,
@@ -34,6 +36,7 @@ from .recipes import (
     SOURCE_RANDOM,
     NoRecipesError,
     async_plan_dinners,
+    event_description,
     norm as _norm,
 )
 
@@ -368,8 +371,19 @@ async def async_setup(hass, config):
         data = hass.data[DOMAIN]
         default_list_id = data["current_list_id"]
         options = data.get("current_options") or {}
+        calendar = call.data.get("calendar")
+        if calendar:
+            # Checked up front so a bad calendar choice leaves the ICA list untouched.
+            state = hass.states.get(calendar)
+            features = state.attributes.get(ATTR_SUPPORTED_FEATURES, 0) if state else 0
+            if not features & CalendarEntityFeature.CREATE_EVENT:
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN,
+                    translation_key="calendar_not_writable",
+                    translation_placeholders={"entity_id": calendar},
+                )
         try:
-            target, result = await async_plan_dinners(
+            target, recipes, result = await async_plan_dinners(
                 data[DATA_ICA],
                 count=call.data["count"],
                 source=call.data["source"],
@@ -393,6 +407,19 @@ async def async_setup(hass, config):
         if result["added"] and list_matches(target, default_list_id):
             # Push the new rows to the to-do entity now instead of on the next refresh.
             await sync()
+
+        if calendar:
+            start = call.data.get("start_date") or dt_util.now().date() + dt.timedelta(days=1)
+            for offset, (recipe, dinner) in enumerate(zip(recipes, result["dinners"])):
+                day = start + dt.timedelta(days=offset)
+                await hass.services.async_call("calendar", "create_event", {
+                    "entity_id": calendar,
+                    "summary": dinner["title"] or "Middag",
+                    "description": event_description(recipe),
+                    "start_date": day,
+                    "end_date": day + dt.timedelta(days=1),
+                }, blocking=True)
+                dinner["date"] = day.isoformat()
         return result
 
     hass.services.async_register(
@@ -403,6 +430,8 @@ async def async_setup(hass, config):
             vol.Optional("count", default=5): vol.All(vol.Coerce(int), vol.Range(min=1, max=10)),
             vol.Optional("source", default=SOURCE_RANDOM): vol.In([SOURCE_RANDOM, SOURCE_FAVORITES]),
             vol.Optional("list"): cv.string,
+            vol.Optional("calendar"): cv.entity_domain("calendar"),
+            vol.Optional("start_date"): cv.date,
         }),
         supports_response=SupportsResponse.OPTIONAL,
     )
