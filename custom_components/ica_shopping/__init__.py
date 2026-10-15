@@ -96,6 +96,13 @@ def _ha_done(group: dict) -> bool:
     return all(it.get("status") == "completed" for it in group["items"])
 
 
+def _drop_ica_rows(ica: dict, row_ids: list) -> None:
+    for key in list(ica):
+        ica[key]["rows"] = [r for r in ica[key]["rows"] if r["id"] not in row_ids]
+        if not ica[key]["rows"]:
+            del ica[key]
+
+
 def _ha_ref(item: dict) -> str:
     return item.get("uid") or item["summary"]
 
@@ -236,11 +243,27 @@ async def _perform_sync_locked(hass, api: ICAApi, entry, clear_checked: bool) ->
             elif in_ica:
                 (remove_from_ica if in_snap else add_to_ha).append(key)
 
+        # --- Ta bort i ICA före tillägg, så att de ryms under taket -----
+        if remove_from_ica:
+            row_ids = [r["id"] for key in remove_from_ica for r in ica[key]["rows"]]
+            if await api.remove_items(list_offline_id, row_ids):
+                for key in remove_from_ica:
+                    _LOGGER.info("❌ Tog bort '%s' från ICA (saknas i HA)", ica.pop(key)["text"])
+
+        clearing = clear_checked or auto_clear
+        if clearing:
+            unstrike = {key for key, done in set_ica_done if not done}
+            struck_ids = [
+                r["id"] for key, g in ica.items() if key not in unstrike
+                for r in g["rows"] if r["isStriked"] and r["id"]
+            ]
+            if struck_ids and await api.remove_items(list_offline_id, struck_ids):
+                _LOGGER.info("🧹 Rensade %d avbockade ICA-rader", len(struck_ids))
+                _drop_ica_rows(ica, struck_ids)
+                add_to_ha = [key for key in add_to_ha if key in ica]
+
         # --- ICA-taket: begränsa add_to_ica om vi närmar oss MAX_ICA_ITEMS
-        ica_rows_after_removes = sum(len(g["rows"]) for g in ica.values()) - sum(
-            len(ica[key]["rows"]) for key in remove_from_ica
-        )
-        allowed = max(0, MAX_ICA_ITEMS - ica_rows_after_removes)
+        allowed = max(0, MAX_ICA_ITEMS - sum(len(g["rows"]) for g in ica.values()))
         skipped_full = add_to_ica[allowed:]
         if skipped_full:
             _LOGGER.warning(
@@ -270,12 +293,6 @@ async def _perform_sync_locked(hass, api: ICAApi, entry, clear_checked: bool) ->
                 _LOGGER.info("📥 Lade till '%s' i ICA", text)
                 # No row id until the next fetch, so clearing skips it this run.
                 ica[key] = {"text": text, "rows": [{"id": None, "isStriked": done, "raw": None}]}
-
-        if remove_from_ica:
-            row_ids = [r["id"] for key in remove_from_ica for r in ica[key]["rows"]]
-            if await api.remove_items(list_offline_id, row_ids):
-                for key in remove_from_ica:
-                    _LOGGER.info("❌ Tog bort '%s' från ICA (saknas i HA)", ica.pop(key)["text"])
 
         for key, done in set_ica_done:
             for row in ica[key]["rows"]:
@@ -310,19 +327,20 @@ async def _perform_sync_locked(hass, api: ICAApi, entry, clear_checked: bool) ->
             _LOGGER.info("🔁 Satte '%s' till %s i HA-todo", ha[key]["text"], status)
 
         # --- Rensa avbockade/avklarade på båda sidor ---------------------
-        if clear_checked or auto_clear:
+        if clearing:
+            # Rows struck by this run; the rest went before the adds.
             struck_ids = [
                 r["id"] for g in ica.values() for r in g["rows"] if r["isStriked"] and r["id"]
             ]
             if struck_ids and await api.remove_items(list_offline_id, struck_ids):
                 _LOGGER.info("🧹 Rensade %d avbockade ICA-rader", len(struck_ids))
-                for key in list(ica):
-                    ica[key]["rows"] = [r for r in ica[key]["rows"] if r["id"] not in struck_ids]
-                    if not ica[key]["rows"]:
-                        del ica[key]
+                _drop_ica_rows(ica, struck_ids)
 
-            # Keep HA items whose ICA rows are still struck, or the next sync would re-add them.
-            still_struck = {k for k, g in ica.items() if any(r["isStriked"] for r in g["rows"])}
+            # Keep HA items whose ICA delete or strike failed, or the next sync would re-add them.
+            still_struck = {
+                k for k, g in ica.items()
+                if any(r["isStriked"] for r in g["rows"]) or (k in ha and _ha_done(ha[k]))
+            }
             completed = [
                 _ha_ref(it) for key, g in ha.items() if key not in still_struck
                 for it in g["items"] if it.get("status") == "completed"
@@ -401,14 +419,16 @@ async def async_setup(hass, config):
                     translation_placeholders={"entity_id": calendar},
                 )
         try:
-            target, recipes, result = await async_plan_dinners(
-                data[DATA_ICA],
-                count=call.data["count"],
-                source=call.data["source"],
-                list_ref=call.data.get("list"),
-                default_list_id=default_list_id,
-                never_add=options.get(CONF_NEVER_ADD, DEFAULT_NEVER_ADD),
-            )
+            # Not held across sync() below, which takes the same lock.
+            async with data.setdefault("sync_lock", asyncio.Lock()):
+                target, recipes, result = await async_plan_dinners(
+                    data[DATA_ICA],
+                    count=call.data["count"],
+                    source=call.data["source"],
+                    list_ref=call.data.get("list"),
+                    default_list_id=default_list_id,
+                    never_add=options.get(CONF_NEVER_ADD, DEFAULT_NEVER_ADD),
+                )
         except NoRecipesError as err:
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
@@ -441,7 +461,7 @@ async def async_setup(hass, config):
                     }, blocking=True)
                     dinner["date"] = day.isoformat()
                     created += 1
-            except HomeAssistantError as err:
+            except Exception as err:
                 raise HomeAssistantError(
                     translation_domain=DOMAIN,
                     translation_key="calendar_event_failed",
@@ -602,6 +622,7 @@ async def async_unload_entry(hass, entry):
         hass.data[DOMAIN]["unsub_listener"]()
 
     unload_ok = await hass.config_entries.async_unload_platforms(entry, ["sensor"])
+    ir.async_delete_issue(hass, DOMAIN, "list_full")
 
     if DOMAIN in hass.data:
         hass.data[DOMAIN].pop("unsub_listener", None)
