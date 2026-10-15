@@ -90,6 +90,8 @@ def _normalize_row(row: dict) -> dict:
         "id": row.get("offlineId"),
         "text": row.get("productName") or "",
         "isStriked": bool(row.get("isStrikedOver")),
+        # changedRows takes the whole row back; sending only changed fields is unverified.
+        "raw": row,
     }
 
 
@@ -375,13 +377,13 @@ class ICAApi:
                 return lst.get("name") or f"Lista {list_id}"
         return f"Lista {list_id}"
 
-    async def add_to_list(self, list_offline_id: str, text: str) -> bool:
+    async def add_to_list(self, list_offline_id: str, text: str, striked: bool = False) -> bool:
         row = {
             "offlineId": str(uuid.uuid4()).upper(),
             "productName": text,
             # Negative sourceId marks a free-text row (not linked to a product).
             "sourceId": -random.randint(10**6, 10**9),
-            "isStrikedOver": False,
+            "isStrikedOver": striked,
             "recipes": [],
             "latestChange": _ts(),
         }
@@ -392,10 +394,35 @@ class ICAApi:
             self._handle_error(f"add '{text}'", err)
             return False
 
-    async def remove_item(self, list_offline_id: str, row_offline_id: str) -> bool:
+    async def set_striked(
+        self, list_offline_id: str, row_offline_id: str, striked: bool, row: dict | None = None
+    ) -> bool:
+        """Strike or unstrike a row. Pass the raw row if you have it to skip a re-fetch."""
         try:
-            await self._sync(list_offline_id, {"deletedRows": [row_offline_id]})
+            if row is None:
+                raw = await self._request("GET", f"{SL_PATH}/{list_offline_id}") or {}
+                row = next(
+                    (r for r in raw.get("rows") or [] if r.get("offlineId") == row_offline_id),
+                    None,
+                )
+                if row is None:
+                    raise IcaApiError(f"row {row_offline_id} not found")
+            changed = {**row, "isStrikedOver": striked, "latestChange": _ts()}
+            await self._sync(list_offline_id, {"changedRows": [changed]})
             return True
         except IcaError as err:
-            self._handle_error(f"remove row {row_offline_id}", err)
+            self._handle_error(f"strike row {row_offline_id}", err)
+            return False
+
+    async def remove_item(self, list_offline_id: str, row_offline_id: str) -> bool:
+        return await self.remove_items(list_offline_id, [row_offline_id])
+
+    async def remove_items(self, list_offline_id: str, row_offline_ids: list[str]) -> bool:
+        if not row_offline_ids:
+            return True
+        try:
+            await self._sync(list_offline_id, {"deletedRows": list(row_offline_ids)})
+            return True
+        except IcaError as err:
+            self._handle_error(f"remove {len(row_offline_ids)} row(s)", err)
             return False

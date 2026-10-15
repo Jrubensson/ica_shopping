@@ -87,7 +87,7 @@ async def _async_validate(hass, username: str, password: str) -> tuple[ICAApi, l
 
 
 class ICAConfigFlow(ConfigFlow, domain=DOMAIN):
-    VERSION = 2
+    VERSION = 3
 
     def __init__(self) -> None:
         self._api: ICAApi | None = None
@@ -134,7 +134,7 @@ class ICAConfigFlow(ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema({
                 vol.Required(CONF_LIST_ID, default=self._lists[0]["id"]): _list_selector(self._lists),
                 vol.Required(CONF_TODO_ENTITY): TODO_SELECTOR,
-                vol.Optional(CONF_REMOVE_STRIKED, default=True): BooleanSelector(),
+                vol.Optional(CONF_REMOVE_STRIKED, default=False): BooleanSelector(),
             }),
         )
 
@@ -227,7 +227,7 @@ class ICAOptionsFlowHandler(OptionsFlow):
                 ): TODO_SELECTOR,
                 vol.Optional(
                     CONF_REMOVE_STRIKED,
-                    default=entry.options.get(CONF_REMOVE_STRIKED, entry.data.get(CONF_REMOVE_STRIKED, True)),
+                    default=entry.options.get(CONF_REMOVE_STRIKED, entry.data.get(CONF_REMOVE_STRIKED, False)),
                 ): BooleanSelector(),
             }),
         )

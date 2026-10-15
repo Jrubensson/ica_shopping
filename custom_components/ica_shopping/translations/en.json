@@ -15,7 +15,7 @@
         "data": {
           "ica_list_id": "ICA shopping list",
           "todo_entity_id": "To-do list entity",
-          "remove_striked": "Remove checked and completed items"
+          "remove_striked": "Clear checked items after every sync"
         }
       },
       "reauth_confirm": {
@@ -53,7 +53,7 @@
         "data": {
           "ica_list_id": "ICA shopping list",
           "todo_entity_id": "To-do list entity",
-          "remove_striked": "Remove checked and completed items"
+          "remove_striked": "Clear checked items after every sync"
         }
       }
     }
@@ -61,6 +61,16 @@
   "exceptions": {
     "not_logged_in": {
       "message": "ICA Shopping is not logged in. Re-authenticate under Settings → Devices & Services → ICA Shopping."
+    }
+  },
+  "services": {
+    "refresh": {
+      "name": "Refresh",
+      "description": "Sync the ICA shopping list with the configured to-do list in both directions."
+    },
+    "clear_checked": {
+      "name": "Clear checked items",
+      "description": "Sync, then delete checked-off rows from the ICA list and completed items from the to-do list."
     }
   }
 }

@@ -15,7 +15,7 @@
         "data": {
           "ica_list_id": "ICA-inköpslista",
           "todo_entity_id": "Att göra-lista (entity)",
-          "remove_striked": "Rensa avbockade och klara varor"
+          "remove_striked": "Rensa avbockade varor efter varje synk"
         }
       },
       "reauth_confirm": {
@@ -53,7 +53,7 @@
         "data": {
           "ica_list_id": "ICA-inköpslista",
           "todo_entity_id": "Att göra-lista (entity)",
-          "remove_striked": "Rensa avbockade och klara varor"
+          "remove_striked": "Rensa avbockade varor efter varje synk"
         }
       }
     }
@@ -61,6 +61,16 @@
   "exceptions": {
     "not_logged_in": {
       "message": "ICA Shopping är inte inloggad. Logga in igen under Inställningar → Enheter och tjänster → ICA Shopping."
+    }
+  },
+  "services": {
+    "refresh": {
+      "name": "Uppdatera",
+      "description": "Synka ICA-listan med den valda att göra-listan åt båda hållen."
+    },
+    "clear_checked": {
+      "name": "Rensa avbockade varor",
+      "description": "Synka och ta sedan bort avbockade rader från ICA-listan och klara poster från att göra-listan."
     }
   }
 }

@@ -2,7 +2,13 @@
 
 Sync your ICA shopping lists with Home Assistant and your shopping/todo list in HA.
 
-The integration performs **bi-directional sync** between your configured HA todo entity and your ICA list: items added on either side are propagated to the other, and items removed (or marked as bought/completed) on either side are removed from both.
+The integration performs **bi-directional sync** between your configured HA todo entity and your ICA list:
+
+- Items added on either side are added to the other.
+- Items removed on either side are removed from the other.
+- Checking an item off in the ICA app marks it completed in HA, and completing it in HA checks it off in ICA. Un-checking works the same way.
+
+Checked items stay on both lists until you clear them, with the `ica_shopping.clear_checked` action or the **Clear checked items after every sync** option.
 
 ## Limitations at the Moment
 
@@ -42,6 +48,21 @@ If ICA ever rejects the stored login (e.g. you changed your password), Home Assi
 ### Upgrading from 3.x (session ID)
 
 Version 4 drops the pasted `thSessionId` cookie. After upgrading, the integration asks you to re-authenticate with personnummer and password. If your configured list can't be found on the account, you'll be asked to pick it from a dropdown.
+
+## Clearing Checked Items
+
+`ica_shopping.clear_checked` syncs first, then deletes every checked-off row from the ICA list and every completed item from the to-do list. Run it from a dashboard button or after you leave the store:
+
+```yaml
+actions:
+  - action: ica_shopping.clear_checked
+```
+
+To clear automatically, turn on **Clear checked items after every sync** under Settings → Devices & Services → ICA Shopping → Configure. Checked items are then removed on the next sync, which is how older versions behaved.
+
+### Upgrading from earlier versions
+
+The old **Remove checked and completed items** option deleted items as soon as they were checked. It is now **Clear checked items after every sync**, and upgrading turns it off so checked items sync as checked. Turn it back on if you prefer the old behavior.
 
 ## Example Automation (ICA Refresh)
 

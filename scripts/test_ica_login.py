@@ -5,7 +5,7 @@ Uses Home Assistant's real aiohttp helpers, so session quirks behave as in HA.
     uv run --python 3.13 --with homeassistant scripts/test_ica_login.py
     uv run --python 3.13 --with homeassistant scripts/test_ica_login.py --dry-run
 
---dry-run stops before credentials are sent. --write-test adds and removes a probe item. Credentials are prompted for and never stored.
+--dry-run stops before credentials are sent. --write-test adds, strikes, unstrikes and removes a probe item. Credentials are prompted for and never stored.
 """
 from __future__ import annotations
 
@@ -140,11 +140,32 @@ async def main(dry_run: bool, write_test: bool) -> int:
             row = next((r for r in after_add["rows"] if r["text"] == probe), None)
             assert row, "added row not found on re-fetch"
             print(f"✓ Added (row id {row['id']}).")
+
+            async def probe_row():
+                fresh = await api.async_get_list(target["id"])
+                return next((r for r in fresh["rows"] if r["id"] == row["id"]), None)
+
+            try:
+                print("Striking it over …")
+                assert await api.set_striked(target["id"], row["id"], True, row=row["raw"]), "strike failed"
+                struck = await probe_row()
+                assert struck and struck["isStriked"], "row not struck over on re-fetch"
+                assert struck["text"] == probe, f"strike changed the text to {struck['text']!r}"
+                print("✓ Struck over.")
+                print("Un-striking it (row looked up by id) …")
+                assert await api.set_striked(target["id"], row["id"], False), "unstrike failed"
+                unstruck = await probe_row()
+                assert unstruck and not unstruck["isStriked"], "row still struck over on re-fetch"
+                print("✓ Un-struck.")
+            except AssertionError:
+                await api.remove_item(target["id"], row["id"])
+                print("(probe row removed after the failure)")
+                raise
             print("Removing it again …")
             assert await api.remove_item(target["id"], row["id"]), "remove failed"
             after_remove = await api.async_get_list(target["id"])
             assert not any(r["text"] == probe for r in after_remove["rows"]), "row still present"
-            print("✓ Removed. Add and remove both work.")
+            print("✓ Removed. Add, strike, unstrike and remove all work.")
         if "session" in shared:
             shared["session"].detach()
         await hass.async_stop(force=True)
@@ -155,7 +176,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--dry-run", action="store_true", help="stop before sending credentials")
     parser.add_argument("--write-test", action="store_true",
-                        help="add a probe item to your first list, then remove it")
+                        help="add a probe item to your first list, strike and unstrike it, then remove it")
     parser.add_argument("-v", "--verbose", action="store_true", help="show the integration's debug logs")
     args = parser.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.WARNING)

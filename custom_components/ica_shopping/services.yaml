@@ -10,3 +10,6 @@ add_item:
 
 refresh:
   description: "Sync the ICA shopping list with the configured todo list in both directions"
+
+clear_checked:
+  description: "Sync, then delete checked-off rows from the ICA list and completed items from the to-do list"

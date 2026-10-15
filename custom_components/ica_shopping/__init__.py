@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Iterable
 
@@ -54,17 +55,38 @@ def _norm(text):
     return (text or "").strip().lower()
 
 
-async def _load_snapshot(hass) -> set:
+async def _load_snapshot(hass) -> dict:
+    """Return {key: done} for items present on both sides after the last sync.
+
+    done is None for entries saved by older versions, which stored a plain list.
+    """
     store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
     data = await store.async_load()
     if not data or not isinstance(data, dict):
-        return set()
-    return set(data.get("synced", []))
+        return {}
+    synced = data.get("synced")
+    if isinstance(synced, list):
+        return {key: None for key in synced}
+    if isinstance(synced, dict):
+        return dict(synced)
+    return {}
 
 
-async def _save_snapshot(hass, items: Iterable[str]) -> None:
+async def _save_snapshot(hass, items: dict) -> None:
     store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
-    await store.async_save({"synced": sorted(set(items))})
+    await store.async_save({"synced": dict(sorted(items.items()))})
+
+
+def _ica_done(group: dict) -> bool:
+    return all(r["isStriked"] for r in group["rows"])
+
+
+def _ha_done(group: dict) -> bool:
+    return all(it.get("status") == "completed" for it in group["items"])
+
+
+def _ha_ref(item: dict) -> str:
+    return item.get("uid") or item["summary"]
 
 
 async def _trigger_sensor_update(hass, list_id):
@@ -89,30 +111,43 @@ async def _trigger_sensor_update(hass, list_id):
     )
 
 
-async def _perform_sync(hass, api: ICAApi, entry) -> None:
+async def _perform_sync(hass, api: ICAApi, entry, clear_checked: bool = False) -> None:
     """Reconcile HA todo entity with ICA list using a persisted snapshot.
 
-    Diff algorithm (per normalized item name):
+    Presence diff (per normalized item name, any completion state):
       in_ha  in_ica  in_snap   → action
-      T      T       *         → no-op (converged)
+      T      T       *         → sync completion state (below)
       T      F       T         → user deleted from ICA → remove from HA
       T      F       F         → user added in HA → push to ICA
       F      T       T         → user deleted from HA → remove from ICA
       F      T       F         → user added in ICA → push to HA
       F      F       *         → no-op (gone on both sides)
 
-    Striked (ICA) / completed (HA) items are pre-processed: when
-    `remove_striked` is enabled, they are treated as an explicit "done"
-    signal and removed from both sides outside the diff. When disabled,
-    they are treated as still present on their own side.
+    Completion (ICA struck over ↔ HA completed), when the sides disagree:
+    the side that differs from the snapshot's stored state changed and wins.
+    Without a stored state, done wins.
+
+    With clear_checked (or the remove_striked option), struck rows and
+    completed items are then deleted on both sides.
     """
+    lock = hass.data[DOMAIN].setdefault("sync_lock", asyncio.Lock())
+    async with lock:
+        await _perform_sync_locked(hass, api, entry, clear_checked)
+
+
+async def _perform_sync_locked(hass, api: ICAApi, entry, clear_checked: bool) -> None:
     todo_entity = entry.options.get("todo_entity_id", entry.data.get("todo_entity_id"))
     list_id = entry.options.get("ica_list_id", entry.data.get("ica_list_id"))
-    remove_striked = entry.options.get(CONF_REMOVE_STRIKED, entry.data.get(CONF_REMOVE_STRIKED, True))
+    auto_clear = entry.options.get(CONF_REMOVE_STRIKED, entry.data.get(CONF_REMOVE_STRIKED, False))
 
     if not todo_entity or not list_id:
         _LOGGER.error("❌ Saknar todo_entity_id eller ica_list_id – avbryter sync")
         return
+
+    async def todo_call(service, data):
+        await hass.services.async_call(
+            "todo", service, {"entity_id": todo_entity, **data}, blocking=True,
+        )
 
     hass.data[DOMAIN]["sync_in_progress"] = True
     try:
@@ -125,21 +160,14 @@ async def _perform_sync(hass, api: ICAApi, entry) -> None:
         # Writes go to the list's offlineId, which may differ in case/format from the stored id.
         list_offline_id = the_list["id"]
 
-        ica_rows = the_list.get("rows", [])
-        ica_active: dict = {}   # norm -> (text, row_id)
-        ica_striked: dict = {}  # norm -> (text, row_id)
-        for row in ica_rows:
-            if not isinstance(row, dict):
+        ica: dict = {}  # norm -> {"text", "rows": [normalized rows]}
+        for row in the_list.get("rows", []):
+            if not isinstance(row, dict) or not row.get("id"):
                 continue
             text = (row.get("text") or "").strip()
             if not text:
                 continue
-            key = _norm(text)
-            row_id = row.get("id")
-            if row.get("isStriked") is True:
-                ica_striked[key] = (text, row_id)
-            else:
-                ica_active[key] = (text, row_id)
+            ica.setdefault(_norm(text), {"text": text, "rows": []})["rows"].append(row)
 
         # --- Hämta items från HA todo-entitet ----------------------------
         try:
@@ -152,141 +180,146 @@ async def _perform_sync(hass, api: ICAApi, entry) -> None:
             _LOGGER.error("💥 Kunde inte hämta items från %s: %s", todo_entity, e)
             return
 
-        todo_items = result.get(todo_entity, {}).get("items", [])
-        todo_active: dict = {}     # norm -> summary
-        todo_completed: dict = {}  # norm -> summary
-        for it in todo_items:
+        ha: dict = {}  # norm -> {"text", "items": [todo items]}
+        for it in result.get(todo_entity, {}).get("items", []):
             if not isinstance(it, dict):
                 continue
             summary = (it.get("summary") or "").strip()
             if not summary:
                 continue
-            key = _norm(summary)
-            if it.get("status") == "completed":
-                todo_completed[key] = summary
-            else:
-                todo_active[key] = summary
-
-        # --- Explicita "klar"-händelser ----------------------------------
-        # När remove_striked är aktivt: behandla striked (ICA) och completed (HA)
-        # som "användaren vill ha bort det överallt". Bypass-diff för dessa nycklar.
-        explicit_removes: set = set()
-        if remove_striked:
-            for key, (text, row_id) in ica_striked.items():
-                if row_id and await api.remove_item(list_offline_id, row_id):
-                    _LOGGER.info("🧹 Rensade avbockad ICA-rad '%s'", text)
-                explicit_removes.add(key)
-
-            for key, summary in todo_completed.items():
-                await hass.services.async_call(
-                    "todo", "remove_item",
-                    {"entity_id": todo_entity, "item": summary},
-                )
-                _LOGGER.info("🧹 Rensade avklarad HA-item '%s'", summary)
-                explicit_removes.add(key)
-
-            # För items som är explicit klara på ena sidan men aktiva på den andra:
-            # ta även bort dem från den andra sidan (det är hela poängen med "done").
-            for key in list(explicit_removes):
-                if key in ica_active:
-                    text, row_id = ica_active[key]
-                    if row_id and await api.remove_item(list_offline_id, row_id):
-                        _LOGGER.info("❌ Tog bort '%s' från ICA (klar i HA)", text)
-                    ica_active.pop(key, None)
-                if key in todo_active:
-                    summary = todo_active[key]
-                    await hass.services.async_call(
-                        "todo", "remove_item",
-                        {"entity_id": todo_entity, "item": summary},
-                    )
-                    _LOGGER.info("🗑️ Tog bort '%s' från HA (avbockad i ICA)", summary)
-                    todo_active.pop(key, None)
-        else:
-            # Striked/completed räknas som närvarande i sin egen källa
-            for key, (text, row_id) in ica_striked.items():
-                ica_active.setdefault(key, (text, row_id))
-            for key, summary in todo_completed.items():
-                todo_active.setdefault(key, summary)
-
-        cur_ha: set = set(todo_active.keys())
-        cur_ica: set = set(ica_active.keys())
+            ha.setdefault(_norm(summary), {"text": summary, "items": []})["items"].append(it)
 
         # --- Ladda snapshot och beräkna diff -----------------------------
         snap = await _load_snapshot(hass)
-        snap -= explicit_removes  # explicit removes räknas inte längre som synkade
 
         add_to_ica: list = []
         add_to_ha: list = []
         remove_from_ica: list = []
         remove_from_ha: list = []
+        set_ica_done: list = []  # (key, done)
+        set_ha_done: list = []   # (key, done)
 
-        for key in (cur_ha | cur_ica | snap) - explicit_removes:
-            in_ha = key in cur_ha
-            in_ica = key in cur_ica
+        for key in set(ha) | set(ica) | set(snap):
+            in_ha = key in ha
+            in_ica = key in ica
             in_snap = key in snap
 
             if in_ha and in_ica:
-                continue
-            if in_ha and not in_ica:
-                if in_snap:
-                    remove_from_ha.append((key, todo_active[key]))
+                ha_done = _ha_done(ha[key])
+                ica_done = _ica_done(ica[key])
+                if ha_done == ica_done:
+                    continue
+                prev = snap.get(key)
+                if prev is None:
+                    target = True
+                elif ha_done != prev:
+                    target = ha_done
                 else:
-                    add_to_ica.append((key, todo_active[key]))
-            elif in_ica and not in_ha:
-                text, row_id = ica_active[key]
-                if in_snap:
-                    if row_id:
-                        remove_from_ica.append((key, text, row_id))
-                else:
-                    add_to_ha.append((key, text))
+                    target = ica_done
+                if ica_done != target:
+                    set_ica_done.append((key, target))
+                if ha_done != target:
+                    set_ha_done.append((key, target))
+            elif in_ha:
+                (remove_from_ha if in_snap else add_to_ica).append(key)
+            elif in_ica:
+                (remove_from_ica if in_snap else add_to_ha).append(key)
 
         # --- ICA-taket: begränsa add_to_ica om vi närmar oss MAX_ICA_ITEMS
-        projected_ica_count = (
-            len(cur_ica) + len(add_to_ica) - len(remove_from_ica)
+        ica_rows_after_removes = sum(len(g["rows"]) for g in ica.values()) - sum(
+            len(ica[key]["rows"]) for key in remove_from_ica
         )
-        if projected_ica_count > MAX_ICA_ITEMS:
-            allowed = MAX_ICA_ITEMS - (len(cur_ica) - len(remove_from_ica))
-            allowed = max(0, allowed)
-            if allowed < len(add_to_ica):
-                _LOGGER.warning(
-                    "⚠️ Tillägg överskrider ICA-tak (%d); begränsar från %d till %d",
-                    MAX_ICA_ITEMS, len(add_to_ica), allowed,
-                )
-                add_to_ica = add_to_ica[:allowed]
+        allowed = max(0, MAX_ICA_ITEMS - ica_rows_after_removes)
+        if allowed < len(add_to_ica):
+            _LOGGER.warning(
+                "⚠️ Tillägg överskrider ICA-tak (%d); begränsar från %d till %d",
+                MAX_ICA_ITEMS, len(add_to_ica), allowed,
+            )
+            add_to_ica = add_to_ica[:allowed]
 
         # --- Applicera operationer ---------------------------------------
-        for key, text in add_to_ica:
-            if await api.add_to_list(list_offline_id, text):
+        for key in add_to_ica:
+            text = ha[key]["text"]
+            done = _ha_done(ha[key])
+            if await api.add_to_list(list_offline_id, text, striked=done):
                 _LOGGER.info("📥 Lade till '%s' i ICA", text)
-                cur_ica.add(key)
+                # No row id until the next fetch, so clearing skips it this run.
+                ica[key] = {"text": text, "rows": [{"id": None, "isStriked": done, "raw": None}]}
 
-        for key, text, row_id in remove_from_ica:
-            if await api.remove_item(list_offline_id, row_id):
-                _LOGGER.info("❌ Tog bort '%s' från ICA (saknas i HA)", text)
-                cur_ica.discard(key)
+        if remove_from_ica:
+            row_ids = [r["id"] for key in remove_from_ica for r in ica[key]["rows"]]
+            if await api.remove_items(list_offline_id, row_ids):
+                for key in remove_from_ica:
+                    _LOGGER.info("❌ Tog bort '%s' från ICA (saknas i HA)", ica.pop(key)["text"])
 
-        for key, text in add_to_ha:
-            await hass.services.async_call(
-                "todo", "add_item",
-                {"entity_id": todo_entity, "item": text},
+        for key, done in set_ica_done:
+            for row in ica[key]["rows"]:
+                if row["isStriked"] != done and await api.set_striked(
+                    list_offline_id, row["id"], done, row=row["raw"]
+                ):
+                    row["isStriked"] = done
+            _LOGGER.info(
+                "%s '%s' i ICA", "✔️ Bockade av" if done else "↩️ Ångrade avbockning av",
+                ica[key]["text"],
             )
+
+        for key in add_to_ha:
+            text = ica[key]["text"]
+            status = "completed" if _ica_done(ica[key]) else "needs_action"
+            await todo_call("add_item", {"item": text})
+            if status == "completed":
+                await todo_call("update_item", {"item": text, "status": status})
             _LOGGER.info("✅ Lade till '%s' i HA-todo", text)
-            cur_ha.add(key)
+            ha[key] = {"text": text, "items": [{"summary": text, "status": status}]}
 
-        for key, summary in remove_from_ha:
-            await hass.services.async_call(
-                "todo", "remove_item",
-                {"entity_id": todo_entity, "item": summary},
-            )
-            _LOGGER.info("🗑️ Tog bort '%s' från HA-todo (saknas i ICA)", summary)
-            cur_ha.discard(key)
+        for key in remove_from_ha:
+            await todo_call("remove_item", {"item": [_ha_ref(it) for it in ha[key]["items"]]})
+            _LOGGER.info("🗑️ Tog bort '%s' från HA-todo (saknas i ICA)", ha.pop(key)["text"])
 
-        # --- Spara snapshot = items som finns på BÅDA sidor efter ops ---
-        new_snap = cur_ha & cur_ica
+        for key, done in set_ha_done:
+            status = "completed" if done else "needs_action"
+            for it in ha[key]["items"]:
+                if it.get("status") != status:
+                    await todo_call("update_item", {"item": _ha_ref(it), "status": status})
+                    it["status"] = status
+            _LOGGER.info("🔁 Satte '%s' till %s i HA-todo", ha[key]["text"], status)
+
+        # --- Rensa avbockade/avklarade på båda sidor ---------------------
+        if clear_checked or auto_clear:
+            struck_ids = [
+                r["id"] for g in ica.values() for r in g["rows"] if r["isStriked"] and r["id"]
+            ]
+            if struck_ids and await api.remove_items(list_offline_id, struck_ids):
+                _LOGGER.info("🧹 Rensade %d avbockade ICA-rader", len(struck_ids))
+                for key in list(ica):
+                    ica[key]["rows"] = [r for r in ica[key]["rows"] if r["id"] not in struck_ids]
+                    if not ica[key]["rows"]:
+                        del ica[key]
+
+            completed = [
+                _ha_ref(it) for g in ha.values() for it in g["items"]
+                if it.get("status") == "completed"
+            ]
+            if completed:
+                await todo_call("remove_item", {"item": completed})
+                _LOGGER.info("🧹 Rensade %d avklarade HA-items", len(completed))
+                for key in list(ha):
+                    ha[key]["items"] = [
+                        it for it in ha[key]["items"] if it.get("status") != "completed"
+                    ]
+                    if not ha[key]["items"]:
+                        del ha[key]
+
+        # --- Spara snapshot = items på BÅDA sidor med gemensam status ----
+        # Keys whose completion write failed keep their old state, so the next run retries.
+        new_snap = {}
+        for key in ha.keys() & ica.keys():
+            ha_done = _ha_done(ha[key])
+            new_snap[key] = ha_done if ha_done == _ica_done(ica[key]) else snap.get(key)
         await _save_snapshot(hass, new_snap)
         _LOGGER.debug(
             "💾 Snapshot uppdaterad: %d items (ha=%d, ica=%d)",
-            len(new_snap), len(cur_ha), len(cur_ica),
+            len(new_snap), len(ha), len(ica),
         )
 
         await _trigger_sensor_update(hass, list_id)
@@ -301,16 +334,26 @@ async def _perform_sync(hass, api: ICAApi, entry) -> None:
 
 async def async_setup(hass, config):
     # Registered here, not per entry, so automations keep a valid action while login is broken.
-    async def handle_refresh(call):
+    def _sync_or_raise():
         sync = hass.data.get(DOMAIN, {}).get("sync")
         if sync is None:
             raise HomeAssistantError(
                 translation_domain=DOMAIN, translation_key="not_logged_in"
             )
+        return sync
+
+    async def handle_refresh(call):
+        sync = _sync_or_raise()
         _LOGGER.debug("🔄 ICA refresh triggered via service")
         await sync()
 
+    async def handle_clear_checked(call):
+        sync = _sync_or_raise()
+        _LOGGER.debug("🧹 ICA clear_checked triggered via service")
+        await sync(clear_checked=True)
+
     hass.services.async_register(DOMAIN, "refresh", handle_refresh)
+    hass.services.async_register(DOMAIN, "clear_checked", handle_clear_checked)
     return True
 
 
@@ -326,6 +369,15 @@ async def async_migrate_entry(hass, entry):
         hass.config_entries.async_update_entry(entry, data=data, options=options, version=2)
         ir.async_delete_issue(hass, DOMAIN, "invalid_session_id")
         _LOGGER.info("ICA Shopping migrerad till v2 – logga in med personnummer och lösenord")
+    if entry.version == 2:
+        # remove_striked used to delete items when checked; it now means "clear checked items
+        # after every sync", which would undo strike syncing, so existing entries start off.
+        data = {**entry.data, CONF_REMOVE_STRIKED: False}
+        options = dict(entry.options)
+        if CONF_REMOVE_STRIKED in options:
+            options[CONF_REMOVE_STRIKED] = False
+        hass.config_entries.async_update_entry(entry, data=data, options=options, version=3)
+        _LOGGER.info("ICA Shopping migrerad till v3 – avbockning synkas istället för att ta bort")
     return True
 
 
@@ -414,7 +466,9 @@ async def async_setup_entry(hass, entry):
     hass.data[DOMAIN]["unsub_listener"] = unsub_listener
     hass.data[DOMAIN]["debounce_unsub_getter"] = lambda: debounce_unsub
 
-    hass.data[DOMAIN]["sync"] = lambda: _perform_sync(hass, api, entry)
+    hass.data[DOMAIN]["sync"] = lambda clear_checked=False: _perform_sync(
+        hass, api, entry, clear_checked
+    )
 
     await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
     entry.async_on_unload(entry.add_update_listener(_options_update_listener))
@@ -461,7 +515,7 @@ async def _options_update_listener(hass, entry):
         )
         # Snapshot tillhör föregående lista – nollställ för att undvika
         # falska "deletes" mot den nya listan.
-        await _save_snapshot(hass, set())
+        await _save_snapshot(hass, {})
 
     hass.data[DOMAIN]["current_list_id"] = new_list_id
     await hass.config_entries.async_reload(entry.entry_id)
