@@ -205,7 +205,7 @@ The On Sale sensor only tells you *how many* offers exist. To get the offers the
 }
 ```
 
-Offers are the store's whole assortment, not only food, and they are fetched live (no caching), so this is the action to use when you want the names rather than just the count.
+Offers are the store's whole assortment, not only food. The result is cached for 15 minutes, so calling it repeatedly — for example while a voice assistant refines a menu — does not hit ICA every time. The first call fetches live; the On Sale sensor keeps its own 6-hour cache.
 
 ```yaml
 automation:

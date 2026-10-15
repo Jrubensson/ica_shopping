@@ -1,6 +1,7 @@
 import asyncio
 import datetime as dt
 import logging
+import time
 from typing import Iterable
 
 import voluptuous as vol
@@ -45,6 +46,10 @@ from .recipes import (
 _LOGGER = logging.getLogger(__name__)
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+# get_offers is called on each turn of a conversation; the store's offers only change daily,
+# so a short cache keeps a back-and-forth from hammering ICA's API. The sensor polls every 6 h.
+OFFERS_CACHE_SECONDS = 15 * 60
 
 def _record_sync_result(hass, success: bool):
     """Store the outcome of a sync run so the Last Sync sensor can report it.
@@ -419,6 +424,9 @@ async def async_setup(hass, config):
             raise HomeAssistantError(
                 translation_domain=DOMAIN, translation_key="not_logged_in"
             )
+        cached = data.get("offers_cache")
+        if cached and time.monotonic() - cached[0] < OFFERS_CACHE_SECONDS:
+            return cached[1]
         options = data.get("current_options") or {}
         try:
             stores = await api.async_get_favorite_stores()
@@ -437,12 +445,14 @@ async def async_setup(hass, config):
                 translation_key="offers_failed",
                 translation_placeholders={"error": str(err)},
             ) from err
-        return {
+        result = {
             "store": store.get("name"),
             "offer_count": len(offers),
             "offers": [format_offer(o) for o in offers],
             "bonus": bonus,
         }
+        data["offers_cache"] = (time.monotonic(), result)
+        return result
 
     hass.services.async_register(
         DOMAIN, "get_offers", handle_get_offers, supports_response=SupportsResponse.OPTIONAL
