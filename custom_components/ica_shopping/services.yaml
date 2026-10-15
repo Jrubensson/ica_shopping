@@ -14,6 +14,10 @@ refresh:
 clear_checked:
   description: "Sync, then delete checked-off rows from the ICA list and completed items from the to-do list"
 
+get_offers:
+  description: "Return the favourite store's current offers and the bonus balance"
+  fields: {}
+
 plan_dinners:
   fields:
     count:
@@ -42,3 +46,12 @@ plan_dinners:
     start_date:
       selector:
         date:
+    preview:
+      default: false
+      selector:
+        boolean:
+    recipes:
+      description: "Recipe ids to use, e.g. '123,456'. Overrides count and source."
+      example: "123,456"
+      selector:
+        text:

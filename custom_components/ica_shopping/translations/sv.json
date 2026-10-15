@@ -78,6 +78,12 @@
     },
     "calendar_event_failed": {
       "message": "Kunde inte lägga in middagarna i kalendern ({error}). {created} av {total} händelser skapades, och {added} ingredienser lades redan till i {list}, så kör inte åtgärden igen utan att ta bort dem först."
+    },
+    "no_favorite_store": {
+      "message": "Ingen favoritbutik hittades. Lägg till en butik i ICA-appen och välj den under Inställningar → Enheter och tjänster → ICA Shopping."
+    },
+    "offers_failed": {
+      "message": "Kunde inte hämta erbjudandena: {error}"
     }
   },
   "services": {
@@ -89,9 +95,13 @@
       "name": "Rensa avbockade varor",
       "description": "Synka och ta sedan bort avbockade rader från ICA-listan och klara poster från att göra-listan."
     },
+    "get_offers": {
+      "name": "Hämta erbjudanden",
+      "description": "Returnerar favoritbutikens aktuella erbjudanden och bonusläget."
+    },
     "plan_dinners": {
       "name": "Planera middagar",
-      "description": "Välj ICA-recept och lägg till deras sammanslagna ingredienser på en inköpslista. Returnerar menyn.",
+      "description": "Välj ICA-recept och lägg till deras sammanslagna ingredienser på en inköpslista. Returnerar menyn. Med preview=true rörs listan inte.",
       "fields": {
         "count": {
           "name": "Antal middagar",
@@ -112,6 +122,14 @@
         "start_date": {
           "name": "Startdatum",
           "description": "Dagen för första middagen i kalendern. Standard är i morgon."
+        },
+        "preview": {
+          "name": "Förhandsgranska",
+          "description": "Returnera menyn och de sammanslagna ingredienserna utan att lägga till något på listan."
+        },
+        "recipes": {
+          "name": "Recept-id",
+          "description": "Recept-id att använda, t.ex. '123,456'. Ersätter count och source, så att exakt det förhandsgranskade menyn läggs till."
         }
       }
     }

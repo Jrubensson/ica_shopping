@@ -81,15 +81,33 @@ def event_description(recipe: dict) -> str:
     return "\n\n".join(p for p in ("\n".join(parts), "\n".join(lines)) if p)
 
 
+def recipe_ingredients(recipe: dict) -> list[str]:
+    """The recipe's ingredient lines, as written on ica.se."""
+    return [
+        text
+        for ing in _ingredients(recipe)
+        if (text := (ing.get("text") or "").strip())
+    ]
+
+
 def dinner_summary(recipe: dict) -> dict:
     return {
+        "id": recipe.get("id"),
         "title": recipe.get("title"),
         "cooking_time": recipe.get("cookingTime"),
         "url": recipe_url(recipe),
+        "ingredients": recipe_ingredients(recipe),
     }
 
 
-async def async_fetch_recipes(api: ICAApi, count: int, source: str) -> list[dict]:
+async def async_fetch_recipes(
+    api: ICAApi, count: int, source: str, recipe_ids: list | None = None
+) -> list[dict]:
+    if recipe_ids:
+        # Committing a plan the caller already picked: fetch exactly those recipes.
+        picked = list(dict.fromkeys(str(r) for r in recipe_ids))
+        return [r for r in [await api.async_get_recipe(i) for i in picked] if r]
+
     if source == SOURCE_FAVORITES:
         ids = list(dict.fromkeys(await api.async_get_favorite_recipe_ids()))
         picked = random.sample(ids, min(count, len(ids)))
@@ -129,25 +147,44 @@ async def async_plan_dinners(
     list_ref: str | None,
     default_list_id: str,
     never_add: Iterable[str],
-) -> tuple[dict, list[dict], dict]:
-    """Return (target list, recipes, service response)."""
-    recipes = await async_fetch_recipes(api, count, source)
+    preview: bool = False,
+    recipe_ids: list | None = None,
+) -> tuple[dict | None, list[dict], dict]:
+    """Return (target list, recipes, service response).
+
+    With preview=True the list is left untouched and the response carries the menu and the
+    merged ingredients, so a caller can show a suggestion before committing it.
+    """
+    recipes = await async_fetch_recipes(api, count, source, recipe_ids)
     if not recipes:
         raise NoRecipesError(f"No {source} recipes returned")
+
+    skip_names = {norm(n) for n in never_add}
+    planned = [ing for ing in aggregate_ingredients(recipes) if norm(ing["name"]) not in skip_names]
+
+    if preview:
+        return None, recipes, {
+            "list": None,
+            "preview": True,
+            "dinners": [dinner_summary(r) for r in recipes],
+            "ingredients": [ing["text"] for ing in planned],
+            "added": [],
+            "skipped_list_full": [],
+        }
+
     target = await async_resolve_or_create_list(api, list_ref, default_list_id)
     # Re-fetch: the overview may omit rows, and active rows decide what to skip.
     target = await api.async_get_list(target["id"]) or target
 
-    skip_names = {norm(n) for n in never_add}
     rows = target.get("rows", [])
     present = {norm(r["text"]) for r in rows if not r.get("isStriked")}
     struck = {norm(r["text"]): r for r in rows if r.get("isStriked") and r.get("id")}
     room = MAX_ICA_ITEMS - len(rows)
     added: list[str] = []
     skipped: list[str] = []
-    for ing in aggregate_ingredients(recipes):
+    for ing in planned:
         name_key, text_key = norm(ing["name"]), norm(ing["text"])
-        if name_key in skip_names or name_key in present or text_key in present:
+        if name_key in present or text_key in present:
             continue
         # Reuse a checked-off row instead of adding a duplicate next to it.
         old = struck.pop(text_key, None) or struck.pop(name_key, None)
@@ -170,7 +207,9 @@ async def async_plan_dinners(
 
     return target, recipes, {
         "list": target.get("name"),
+        "preview": False,
         "dinners": [dinner_summary(r) for r in recipes],
+        "ingredients": [ing["text"] for ing in planned],
         "added": added,
         "skipped_list_full": skipped,
     }

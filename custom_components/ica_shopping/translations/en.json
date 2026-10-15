@@ -78,6 +78,12 @@
     },
     "calendar_event_failed": {
       "message": "Couldn't add the dinners to the calendar ({error}). {created} of {total} events were created, and {added} ingredients were already added to {list}, so don't run the action again without removing them first."
+    },
+    "no_favorite_store": {
+      "message": "No favourite store found. Add a store in the ICA app and pick it under Settings → Devices & Services → ICA Shopping."
+    },
+    "offers_failed": {
+      "message": "Could not fetch the offers: {error}"
     }
   },
   "services": {
@@ -89,9 +95,13 @@
       "name": "Clear checked items",
       "description": "Sync, then delete checked-off rows from the ICA list and completed items from the to-do list."
     },
+    "get_offers": {
+      "name": "Get offers",
+      "description": "Return the favourite store's current offers and the bonus balance."
+    },
     "plan_dinners": {
       "name": "Plan dinners",
-      "description": "Pick ICA recipes and add their merged ingredients to a shopping list. Returns the menu.",
+      "description": "Pick ICA recipes and add their merged ingredients to a shopping list. Returns the menu. With preview=true the list is left untouched.",
       "fields": {
         "count": {
           "name": "Number of dinners",
@@ -112,6 +122,14 @@
         "start_date": {
           "name": "Start date",
           "description": "Day of the first dinner in the calendar. Defaults to tomorrow."
+        },
+        "preview": {
+          "name": "Preview",
+          "description": "Return the menu and the merged ingredients without adding anything to the list."
+        },
+        "recipes": {
+          "name": "Recipe ids",
+          "description": "Recipe ids to use, e.g. '123,456'. Overrides count and source, so exactly the previewed menu is added."
         }
       }
     }
