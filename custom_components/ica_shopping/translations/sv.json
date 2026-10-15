@@ -75,6 +75,9 @@
     },
     "calendar_not_writable": {
       "message": "{entity_id} kan inte skapa händelser. Välj en kalender som stödjer nya händelser, t.ex. Local Calendar, Google Calendar eller CalDAV."
+    },
+    "calendar_event_failed": {
+      "message": "Kunde inte lägga in middagarna i kalendern ({error}). {created} av {total} händelser skapades, och {added} ingredienser lades redan till i {list}, så kör inte åtgärden igen utan att ta bort dem först."
     }
   },
   "services": {
@@ -163,6 +166,12 @@
           }
         }
       }
+    }
+  },
+  "issues": {
+    "list_full": {
+      "title": "ICA-listan är full",
+      "description": "ICA-listan har nått gränsen på {limit} rader, så {count} nya varor från att göra-listan lades inte till: {skipped}. Avbockade rader räknas mot gränsen. Kör åtgärden **ica_shopping.clear_checked**, eller slå på \"Rensa avbockade varor efter varje synk\" i integrationens alternativ. Meddelandet försvinner efter nästa synk som får plats."
     }
   }
 }

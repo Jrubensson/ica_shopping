@@ -436,6 +436,7 @@ class ICAApi:
 
     async def async_get_recipe(self, recipe_id) -> dict:
         return await self._request("GET", f"{RECIPE_PATH}/recipes/{recipe_id}?api-version=2.0") or {}
+
     async def async_get_bonus(self) -> dict:
         return await self._request("GET", f"{BONUS_PATH}/bonus/current") or {}
 

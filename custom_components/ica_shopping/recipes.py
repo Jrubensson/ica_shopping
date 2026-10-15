@@ -6,6 +6,7 @@ import random
 import re
 from typing import Iterable
 
+from .const import MAX_ICA_ITEMS
 from .ica_api import ICAApi, IcaApiError, IcaError, list_matches
 
 _LOGGER = logging.getLogger(__name__)
@@ -138,17 +139,38 @@ async def async_plan_dinners(
     target = await api.async_get_list(target["id"]) or target
 
     skip_names = {norm(n) for n in never_add}
-    present = {norm(r["text"]) for r in target.get("rows", []) if not r.get("isStriked")}
+    rows = target.get("rows", [])
+    present = {norm(r["text"]) for r in rows if not r.get("isStriked")}
+    struck = {norm(r["text"]): r for r in rows if r.get("isStriked") and r.get("id")}
+    room = MAX_ICA_ITEMS - len(rows)
     added: list[str] = []
+    skipped: list[str] = []
     for ing in aggregate_ingredients(recipes):
         name_key, text_key = norm(ing["name"]), norm(ing["text"])
         if name_key in skip_names or name_key in present or text_key in present:
             continue
+        # Reuse a checked-off row instead of adding a duplicate next to it.
+        old = struck.pop(text_key, None) or struck.pop(name_key, None)
+        if old is not None:
+            if await api.set_striked(target["id"], old["id"], False, row=old.get("raw")):
+                added.append(old["text"])
+                present.add(norm(old["text"]))
+            continue
+        if room <= 0:
+            skipped.append(ing["text"])
+            continue
         if await api.add_to_list(target["id"], ing["text"]):
             added.append(ing["text"])
+            present.add(text_key)
+            room -= 1
+    if skipped:
+        _LOGGER.warning(
+            "⚠️ ICA-listan är full (%d rader); hoppade över %d ingredienser", MAX_ICA_ITEMS, len(skipped)
+        )
 
     return target, recipes, {
         "list": target.get("name"),
         "dinners": [dinner_summary(r) for r in recipes],
         "added": added,
+        "skipped_list_full": skipped,
     }

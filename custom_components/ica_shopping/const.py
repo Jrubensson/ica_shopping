@@ -10,6 +10,9 @@ CONF_NEVER_ADD = "never_add"
 DEFAULT_NEVER_ADD = ["salt", "peppar", "svartpeppar", "vatten", "olja", "olivolja", "smör"]
 CONF_STORE_ID = "store_id"
 
+# ICA rejects more rows per list; checked rows count too.
+MAX_ICA_ITEMS = 250
+
 IMS_BASE = "https://ims.icagruppen.se"
 API_BASE = "https://apimgw-pub.ica.se"
 

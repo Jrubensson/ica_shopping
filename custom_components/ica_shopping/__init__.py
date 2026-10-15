@@ -29,6 +29,7 @@ from .const import (
     DOMAIN,
     DATA_ICA,
     DEFAULT_NEVER_ADD,
+    MAX_ICA_ITEMS,
 )
 from .ica_api import ICAApi, IcaAuthError, IcaError, list_matches
 from .recipes import (
@@ -62,7 +63,6 @@ def _record_sync_result(hass, success: bool):
 
 STORAGE_VERSION = 1
 STORAGE_KEY = "ica_shopping_sync_state"
-MAX_ICA_ITEMS = 250
 DEBOUNCE_SECONDS = 1
 
 
@@ -241,12 +241,26 @@ async def _perform_sync_locked(hass, api: ICAApi, entry, clear_checked: bool) ->
             len(ica[key]["rows"]) for key in remove_from_ica
         )
         allowed = max(0, MAX_ICA_ITEMS - ica_rows_after_removes)
-        if allowed < len(add_to_ica):
+        skipped_full = add_to_ica[allowed:]
+        if skipped_full:
             _LOGGER.warning(
                 "⚠️ Tillägg överskrider ICA-tak (%d); begränsar från %d till %d",
                 MAX_ICA_ITEMS, len(add_to_ica), allowed,
             )
             add_to_ica = add_to_ica[:allowed]
+            ir.async_create_issue(
+                hass, DOMAIN, "list_full",
+                is_fixable=False,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key="list_full",
+                translation_placeholders={
+                    "limit": str(MAX_ICA_ITEMS),
+                    "skipped": ", ".join(ha[key]["text"] for key in skipped_full[:10]),
+                    "count": str(len(skipped_full)),
+                },
+            )
+        else:
+            ir.async_delete_issue(hass, DOMAIN, "list_full")
 
         # --- Applicera operationer ---------------------------------------
         for key in add_to_ica:
@@ -307,14 +321,18 @@ async def _perform_sync_locked(hass, api: ICAApi, entry, clear_checked: bool) ->
                     if not ica[key]["rows"]:
                         del ica[key]
 
+            # Keep HA items whose ICA rows are still struck, or the next sync would re-add them.
+            still_struck = {k for k, g in ica.items() if any(r["isStriked"] for r in g["rows"])}
             completed = [
-                _ha_ref(it) for g in ha.values() for it in g["items"]
-                if it.get("status") == "completed"
+                _ha_ref(it) for key, g in ha.items() if key not in still_struck
+                for it in g["items"] if it.get("status") == "completed"
             ]
             if completed:
                 await todo_call("remove_item", {"item": completed})
                 _LOGGER.info("🧹 Rensade %d avklarade HA-items", len(completed))
                 for key in list(ha):
+                    if key in still_struck:
+                        continue
                     ha[key]["items"] = [
                         it for it in ha[key]["items"] if it.get("status") != "completed"
                     ]
@@ -335,7 +353,7 @@ async def _perform_sync_locked(hass, api: ICAApi, entry, clear_checked: bool) ->
 
         await _trigger_sensor_update(hass, list_id)
 
-        _record_sync_result(hass, True)
+        _record_sync_result(hass, not skipped_full)
     except Exception as e:
         _LOGGER.exception("💥 Fel under _perform_sync: %s", e)
         _record_sync_result(hass, False)
@@ -410,16 +428,31 @@ async def async_setup(hass, config):
 
         if calendar:
             start = call.data.get("start_date") or dt_util.now().date() + dt.timedelta(days=1)
-            for offset, (recipe, dinner) in enumerate(zip(recipes, result["dinners"])):
-                day = start + dt.timedelta(days=offset)
-                await hass.services.async_call("calendar", "create_event", {
-                    "entity_id": calendar,
-                    "summary": dinner["title"] or "Middag",
-                    "description": event_description(recipe),
-                    "start_date": day,
-                    "end_date": day + dt.timedelta(days=1),
-                }, blocking=True)
-                dinner["date"] = day.isoformat()
+            created = 0
+            try:
+                for offset, (recipe, dinner) in enumerate(zip(recipes, result["dinners"])):
+                    day = start + dt.timedelta(days=offset)
+                    await hass.services.async_call("calendar", "create_event", {
+                        "entity_id": calendar,
+                        "summary": dinner["title"] or "Middag",
+                        "description": event_description(recipe),
+                        "start_date": day,
+                        "end_date": day + dt.timedelta(days=1),
+                    }, blocking=True)
+                    dinner["date"] = day.isoformat()
+                    created += 1
+            except HomeAssistantError as err:
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN,
+                    translation_key="calendar_event_failed",
+                    translation_placeholders={
+                        "error": str(err),
+                        "created": str(created),
+                        "total": str(len(result["dinners"])),
+                        "added": str(len(result["added"])),
+                        "list": result["list"] or "",
+                    },
+                ) from err
         return result
 
     hass.services.async_register(

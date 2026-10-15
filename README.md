@@ -145,7 +145,9 @@ automation:
             {{ plan.added | count }} items added to {{ plan.list }}.
 ```
 
-The response looks like `{"list": "Handla", "dinners": [{"title": …, "cooking_time": …, "url": …, "date": "2026-10-19"}], "added": ["5 dl mjölk", …]}`; `date` is only included when `calendar` is set.
+The response looks like `{"list": "Handla", "dinners": [{"title": …, "cooking_time": …, "url": …, "date": "2026-10-19"}], "added": ["5 dl mjölk", …], "skipped_list_full": []}`; `date` is only included when `calendar` is set.
+
+An ingredient whose only row on the list is checked off is unchecked instead of added again. `skipped_list_full` lists ingredients left out because the ICA list reached its 250-row limit (checked rows count too); run `ica_shopping.clear_checked` to make room.
 
 ## Bonus and Offers Sensors
 

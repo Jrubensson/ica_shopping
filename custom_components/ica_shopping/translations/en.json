@@ -75,6 +75,9 @@
     },
     "calendar_not_writable": {
       "message": "{entity_id} can't create events. Pick a calendar that supports new events, such as Local Calendar, Google Calendar or CalDAV."
+    },
+    "calendar_event_failed": {
+      "message": "Couldn't add the dinners to the calendar ({error}). {created} of {total} events were created, and {added} ingredients were already added to {list}, so don't run the action again without removing them first."
     }
   },
   "services": {
@@ -163,6 +166,12 @@
           }
         }
       }
+    }
+  },
+  "issues": {
+    "list_full": {
+      "title": "ICA list is full",
+      "description": "The ICA list has reached its limit of {limit} rows, so {count} new item(s) from the to-do list weren't added: {skipped}. Checked-off rows count toward the limit. Run the **ica_shopping.clear_checked** action, or turn on \"Clear checked items after every sync\" in the integration's options. This message disappears after the next sync that fits."
     }
   }
 }
