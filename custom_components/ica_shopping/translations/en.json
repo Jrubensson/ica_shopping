@@ -1,35 +1,61 @@
 {
   "config": {
     "step": {
-      "init": {
-        "title": "ICA Shopping Configuration",
-        "description": "{warning_text}"
+      "user": {
+        "title": "Log in to ICA",
+        "description": "Log in with the personnummer and password you use in the ICA app. BankID-only accounts are not supported – set a password at ica.se first. Home Assistant must run on a Swedish IP address.",
+        "data": {
+          "username": "Personnummer (YYYYMMDDXXXX)",
+          "password": "ICA password"
+        }
+      },
+      "list": {
+        "title": "Choose list",
+        "description": "Pick the ICA list to sync and the Home Assistant to-do list to sync it with.",
+        "data": {
+          "ica_list_id": "ICA shopping list",
+          "todo_entity_id": "To-do list entity",
+          "remove_striked": "Remove checked and completed items"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Log in to ICA again",
+        "description": "ICA rejected the stored login. Enter your personnummer and password again.",
+        "data": {
+          "username": "Personnummer (YYYYMMDDXXXX)",
+          "password": "ICA password"
+        }
+      },
+      "reauth_list": {
+        "title": "Choose list",
+        "description": "The previously configured list could not be found on this account. Pick the list to sync.",
+        "data": {
+          "ica_list_id": "ICA shopping list"
+        }
       }
+    },
+    "error": {
+      "invalid_auth": "Wrong personnummer or password (or the account only supports BankID).",
+      "cannot_connect": "Could not reach ICA. Try again later.",
+      "geo_blocked": "ICA blocks requests from outside Sweden (HTTP 451). Home Assistant must run on a Swedish IP address.",
+      "no_lists": "The account has no shopping lists. Create one in the ICA app first.",
+      "unknown": "Unexpected error, see the log."
+    },
+    "abort": {
+      "reauth_successful": "Logged in again successfully."
     }
   },
   "options": {
     "step": {
       "init": {
         "title": "ICA Shopping Configuration",
-        "description": "Update the session ID (access token) when it has expired, or change the list/options. {warning_text}",
+        "description": "Changing the list may sync existing to-do items to the new ICA list. Check the list first if needed.",
         "data": {
-          "session_id": "Session ID (thSessionId / access token)",
-          "ica_list_id": "ICA list ID",
+          "ica_list_id": "ICA shopping list",
           "todo_entity_id": "To-do list entity",
           "remove_striked": "Remove checked and completed items"
         }
       }
     }
-  },
-  "issues": {
-    "invalid_session_id": {
-      "title": "Session ID is invalid",
-      "description": "The ICA integration cannot fetch data. Open the integration and update the session ID in the configuration.",
-      "severity": "error"
-    }
-  },
-  "remove_striked_both": {
-    "name": "Remove checked and completed items",
-    "description": "Removes checked rows from ICA and completed items from Keep"
   }
 }

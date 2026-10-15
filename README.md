@@ -23,38 +23,25 @@ Download the Integration and restart Home Assistant.
 
 Configure Integration:
 
-Go to Settings -> Devices & Services.
-Click Add Integration.
-Search for and select Ica Shopping.
-5. Enter your `session_id` and `ica_list_id` which you want to add.
-6. Link a `todo` entity to sync with (any HA todo entity — the built-in shopping list, a custom todo integration, etc.).
-Submit
+1. Go to **Settings → Devices & Services**.
+2. Click **Add Integration** and select **ICA Shopping**.
+3. Log in with your **personnummer** and the **password** you use in the ICA app.
+4. Pick the ICA shopping list to sync from the dropdown.
+5. Link a `todo` entity to sync with (any HA todo entity — the built-in shopping list, a custom todo integration, etc.).
 
-## How to Get Your `session_id`
+## Authentication
 
-1. Open [ica.se](https://www.ica.se) in Chrome.
-2. Log in.
-3. Open Developer Tools → Application → Cookies.
-4. Find the cookie called `thSessionId`.
-5. Copy its value and paste into the integration config.
+The integration logs in the same way the ICA mobile app does (OAuth with personnummer + password) and keeps a refresh token in the config entry. Access tokens are renewed automatically, so there is nothing to paste or update by hand.
 
-NOTE: this is only valid for ~3 months which you then need to update
+Requirements:
+- **A password on your ICA account.** Accounts that only log in with BankID are not supported — set a password at [ica.se](https://www.ica.se) first.
+- **A Swedish IP address.** ICA's API gateway rejects requests from outside Sweden (HTTP 451).
 
+If ICA ever rejects the stored login (e.g. you changed your password), Home Assistant shows a **Reconfigure / re-authenticate** prompt under Settings → Devices & Services; enter your personnummer and password again.
 
-## How to Get Your `ica_list_id`
+### Upgrading from 3.x (session ID)
 
-1. Open [ica.se](https://www.ica.se) in Chrome
-2. Log in
-3. Go to one of your shopping list or create a new
-4. Open Developer Tools → Network.
-5. Make a change in your list
-6. Under Network it will now show the request made for your list with your list ID
-7. Copy its value and paste into the integration config.
-
-The url looks like this:
-https://apimgw-pub.ica.se/sverige/digx/shopping-list/v1/api/row/ab95586e-ffd3-4927-bfc7-85d1c5193dbb
-with 'ab95586e-ffd3-4927-bfc7-85d1c5193dbb' being your list_id
-
+Version 4 drops the pasted `thSessionId` cookie. After upgrading, the integration asks you to re-authenticate with personnummer and password. If your configured list can't be found on the account, you'll be asked to pick it from a dropdown.
 
 ## Example Automation (ICA Refresh)
 
@@ -94,9 +81,9 @@ mode: single
 
 ```
 
-## Detecting Sync Failures (Expired Token)
+## Detecting Sync Failures
 
-Your `session_id` (`thSessionId`) is only valid for ~3 months. When it expires, syncs start failing silently. The integration exposes a **Sync Status** sensor whose state is `success` or `failed`, so you can be notified the moment a sync fails and know it's time to refresh the token.
+The integration exposes a **Sync Status** sensor whose state is `success` or `failed`, so you can be notified when a sync fails (for example if ICA is unreachable or the login needs to be renewed).
 
 The entity id depends on your list name — check **Settings → Devices & Services → ICA Shopping → the device** to find it (e.g. `sensor.ica_handlingslista_sync_status`).
 
@@ -112,12 +99,12 @@ automation:
         data:
           title: "ICA Shopping sync failed"
           message: >
-            The ICA sync failed — your session token has likely expired.
-            Open the integration and update the session_id.
+            The ICA sync failed. Check Settings → Devices & Services
+            for a re-authentication prompt.
 ```
 
 > **Tip:** trigger on `to: "failed"` rather than "not success", so the automation doesn't fire on the brief `unknown` state after a Home Assistant restart.
 
 Two related diagnostic sensors are also available on the same device:
-- **Last Sync** — timestamp of the last run, with `status` and `last_successful_sync` attributes (handy to see how long ago the session was last valid).
-- **Access Token** — the live access token (or `❌` when the session can't be authenticated).
+- **Last Sync** — timestamp of the last run, with `status` and `last_successful_sync` attributes.
+- **Access Token Expiry** — when the current access token expires (it is refreshed automatically before then).

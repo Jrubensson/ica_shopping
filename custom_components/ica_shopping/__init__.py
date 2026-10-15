@@ -1,13 +1,23 @@
 import logging
 from typing import Iterable
 
+from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.event import async_call_later
 from homeassistant.util import dt as dt_util
 from homeassistant.helpers import entity_registry
+from homeassistant.helpers import issue_registry as ir
 
-from .const import DOMAIN, DATA_ICA
-from .ica_api import ICAApi
+from .const import (
+    CONF_AUTH,
+    CONF_LIST_ID,
+    CONF_REMOVE_STRIKED,
+    CONF_TODO_ENTITY,
+    DOMAIN,
+    DATA_ICA,
+)
+from .ica_api import ICAApi, IcaAuthError, IcaError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -91,7 +101,7 @@ async def _perform_sync(hass, api: ICAApi, entry) -> None:
     """
     todo_entity = entry.options.get("todo_entity_id", entry.data.get("todo_entity_id"))
     list_id = entry.options.get("ica_list_id", entry.data.get("ica_list_id"))
-    remove_striked = entry.options.get("remove_striked", True)
+    remove_striked = entry.options.get(CONF_REMOVE_STRIKED, entry.data.get(CONF_REMOVE_STRIKED, True))
 
     if not todo_entity or not list_id:
         _LOGGER.error("❌ Saknar todo_entity_id eller ica_list_id – avbryter sync")
@@ -100,13 +110,13 @@ async def _perform_sync(hass, api: ICAApi, entry) -> None:
     hass.data[DOMAIN]["sync_in_progress"] = True
     try:
         # --- Hämta ICA-listans rader -------------------------------------
-        lists = await api.fetch_lists()
-        the_list = next((l for l in lists if l.get("id") == list_id), None)
+        the_list = await api.get_list_by_id(list_id)
         if the_list is None:
-            # Vanligaste orsaken: utgången thSessionId → fetch_lists() gav [].
             _LOGGER.warning("❌ Kunde inte hitta ICA-lista %s", list_id)
             _record_sync_result(hass, False)
             return
+        # Writes go to the list's offlineId, which may differ in case/format from the stored id.
+        list_offline_id = the_list["id"]
 
         ica_rows = the_list.get("rows", [])
         ica_active: dict = {}   # norm -> (text, row_id)
@@ -156,7 +166,7 @@ async def _perform_sync(hass, api: ICAApi, entry) -> None:
         explicit_removes: set = set()
         if remove_striked:
             for key, (text, row_id) in ica_striked.items():
-                if row_id and await api.remove_item(row_id):
+                if row_id and await api.remove_item(list_offline_id, row_id):
                     _LOGGER.info("🧹 Rensade avbockad ICA-rad '%s'", text)
                 explicit_removes.add(key)
 
@@ -173,7 +183,7 @@ async def _perform_sync(hass, api: ICAApi, entry) -> None:
             for key in list(explicit_removes):
                 if key in ica_active:
                     text, row_id = ica_active[key]
-                    if row_id and await api.remove_item(row_id):
+                    if row_id and await api.remove_item(list_offline_id, row_id):
                         _LOGGER.info("❌ Tog bort '%s' från ICA (klar i HA)", text)
                     ica_active.pop(key, None)
                 if key in todo_active:
@@ -239,12 +249,12 @@ async def _perform_sync(hass, api: ICAApi, entry) -> None:
 
         # --- Applicera operationer ---------------------------------------
         for key, text in add_to_ica:
-            if await api.add_to_list(list_id, text):
+            if await api.add_to_list(list_offline_id, text):
                 _LOGGER.info("📥 Lade till '%s' i ICA", text)
                 cur_ica.add(key)
 
         for key, text, row_id in remove_from_ica:
-            if await api.remove_item(row_id):
+            if await api.remove_item(list_offline_id, row_id):
                 _LOGGER.info("❌ Tog bort '%s' från ICA (saknas i HA)", text)
                 cur_ica.discard(key)
 
@@ -286,13 +296,49 @@ async def async_setup(hass, config):
     return True
 
 
+async def async_migrate_entry(hass, entry):
+    if entry.version == 1:
+        # v1 authenticated with a pasted thSessionId cookie; v2 needs personnummer + password.
+        data = {
+            k: entry.options.get(k, entry.data.get(k))
+            for k in (CONF_LIST_ID, CONF_TODO_ENTITY, CONF_REMOVE_STRIKED)
+            if entry.options.get(k, entry.data.get(k)) is not None
+        }
+        options = {k: v for k, v in entry.options.items() if k != "session_id"}
+        hass.config_entries.async_update_entry(entry, data=data, options=options, version=2)
+        ir.async_delete_issue(hass, DOMAIN, "invalid_session_id")
+        _LOGGER.info("ICA Shopping migrerad till v2 – logga in med personnummer och lösenord")
+    return True
+
+
 async def async_setup_entry(hass, entry):
     _LOGGER.debug("⚙️ ICA Shopping initieras via UI config entry")
-    session_id = entry.options.get("session_id", entry.data["session_id"])
-    list_id = entry.options.get("ica_list_id", entry.data["ica_list_id"])
-    api = ICAApi(hass, session_id=session_id)
+    if not entry.data.get(CONF_USERNAME) or not entry.data.get(CONF_PASSWORD):
+        raise ConfigEntryAuthFailed("Personnummer och lösenord saknas")
+
+    list_id = entry.options.get(CONF_LIST_ID, entry.data[CONF_LIST_ID])
+
+    def _persist_auth(state):
+        hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_AUTH: state})
+
+    api = ICAApi(
+        hass,
+        entry.data[CONF_USERNAME],
+        entry.data[CONF_PASSWORD],
+        auth_state=entry.data.get(CONF_AUTH),
+        on_auth_update=_persist_auth,
+        on_auth_failed=lambda: entry.async_start_reauth(hass),
+    )
+    try:
+        await api.async_get_access_token()
+    except IcaAuthError as err:
+        raise ConfigEntryAuthFailed(str(err)) from err
+    except IcaError as err:
+        raise ConfigEntryNotReady(str(err)) from err
+
     hass.data.setdefault(DOMAIN, {})[DATA_ICA] = api
     hass.data[DOMAIN]["current_list_id"] = list_id
+    hass.data[DOMAIN]["current_options"] = dict(entry.options)
     hass.data[DOMAIN]["sync_in_progress"] = False
 
     todo_entity = entry.options.get("todo_entity_id", entry.data.get("todo_entity_id"))
@@ -383,11 +429,15 @@ async def async_unload_entry(hass, entry):
         hass.data[DOMAIN].pop("unsub_listener", None)
         hass.data[DOMAIN].pop("debounce_unsub_getter", None)
         hass.data[DOMAIN].pop("sync_in_progress", None)
+        hass.data[DOMAIN].pop("current_options", None)
 
     return unload_ok
 
 
 async def _options_update_listener(hass, entry):
+    # Token refreshes rewrite entry.data every ~15 min; only option changes warrant a reload.
+    if dict(entry.options) == hass.data[DOMAIN].get("current_options"):
+        return
     _LOGGER.debug("♻️ Optioner har ändrats, laddar om entry")
 
     prev_list_id = hass.data[DOMAIN].get("current_list_id")

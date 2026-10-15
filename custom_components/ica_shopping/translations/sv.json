@@ -1,35 +1,61 @@
 {
   "config": {
     "step": {
-      "init": {
-        "title": "ICA Shopping – Konfiguration",
-        "description": "{warning_text}"
+      "user": {
+        "title": "Logga in på ICA",
+        "description": "Logga in med personnummer och lösenord som i ICA-appen. Konton som bara använder BankID stöds inte – skapa ett lösenord på ica.se först. Home Assistant måste köras från en svensk IP-adress.",
+        "data": {
+          "username": "Personnummer (ÅÅÅÅMMDDXXXX)",
+          "password": "ICA-lösenord"
+        }
+      },
+      "list": {
+        "title": "Välj lista",
+        "description": "Välj vilken ICA-lista som ska synkas och med vilken att göra-lista i Home Assistant.",
+        "data": {
+          "ica_list_id": "ICA-inköpslista",
+          "todo_entity_id": "Att göra-lista (entity)",
+          "remove_striked": "Rensa avbockade och klara varor"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Logga in på ICA igen",
+        "description": "ICA godkände inte den sparade inloggningen. Ange personnummer och lösenord igen.",
+        "data": {
+          "username": "Personnummer (ÅÅÅÅMMDDXXXX)",
+          "password": "ICA-lösenord"
+        }
+      },
+      "reauth_list": {
+        "title": "Välj lista",
+        "description": "Den tidigare valda listan hittades inte på kontot. Välj vilken lista som ska synkas.",
+        "data": {
+          "ica_list_id": "ICA-inköpslista"
+        }
       }
+    },
+    "error": {
+      "invalid_auth": "Fel personnummer eller lösenord (eller så stöder kontot bara BankID).",
+      "cannot_connect": "Kunde inte nå ICA. Försök igen senare.",
+      "geo_blocked": "ICA blockerar anrop från utanför Sverige (HTTP 451). Home Assistant måste köras från en svensk IP-adress.",
+      "no_lists": "Kontot har inga inköpslistor. Skapa en i ICA-appen först.",
+      "unknown": "Oväntat fel, se loggen."
+    },
+    "abort": {
+      "reauth_successful": "Inloggningen är förnyad."
     }
   },
   "options": {
     "step": {
       "init": {
         "title": "ICA Shopping – Konfiguration",
-        "description": "Uppdatera session ID (åtkomsttoken) när det har gått ut, eller ändra lista/inställningar. {warning_text}",
+        "description": "Om du byter lista kan befintliga att göra-poster synkas till den nya ICA-listan. Kontrollera listan först vid behov.",
         "data": {
-          "session_id": "Session ID (thSessionId / åtkomsttoken)",
-          "ica_list_id": "ICA list-ID",
+          "ica_list_id": "ICA-inköpslista",
           "todo_entity_id": "Att göra-lista (entity)",
           "remove_striked": "Rensa avbockade och klara varor"
         }
       }
     }
-  },
-  "issues": {
-    "invalid_session_id": {
-      "title": "Session ID är ogiltigt",
-      "description": "ICA-integrationen kan inte hämta data. Öppna integrationen och uppdatera session ID:t i konfigurationen.",
-      "severity": "error"
-    }
-  },
-  "remove_striked_both": {
-    "name": "Rensa avbockade och klara varor",
-    "description": "Tar bort avbockade rader från ICA och completed-items från Keep"
   }
 }

@@ -1,8 +1,29 @@
 DOMAIN = "ica_shopping"
 DATA_ICA = f"{DOMAIN}._data"
-COOKIE_CACHE_FILE = ".ica_cookies.json"
 
-API_USER_INFO = "https://www.ica.se/api/user/information"
-API_LIST_ALL = "https://apimgw-pub.ica.se/sverige/digx/shopping-list/v1/api/list/all"
-API_ADD_ROW = "https://apimgw-pub.ica.se/sverige/digx/shopping-list/v1/api/list/{list_id}/row"
-API_REMOVE_ROW = "https://apimgw-pub.ica.se/sverige/digx/shopping-list/v1/api/list/{list_id}/row/{row_id}"
+CONF_AUTH = "auth"
+CONF_LIST_ID = "ica_list_id"
+CONF_TODO_ENTITY = "todo_entity_id"
+CONF_REMOVE_STRIKED = "remove_striked"
+
+IMS_BASE = "https://ims.icagruppen.se"
+API_BASE = "https://apimgw-pub.ica.se"
+
+TOKEN_ENDPOINT = f"{IMS_BASE}/oauth/v2/token"
+AUTHORIZE_ENDPOINT = f"{IMS_BASE}/oauth/v2/authorize"
+REGISTER_ENDPOINT = f"{IMS_BASE}/register"
+LOGIN_ENDPOINT = f"{IMS_BASE}/authn/authenticate/IcaCustomers"
+
+# Public constants shipped in ICA's mobile app (via LazyTarget/ha-ica-todo).
+DCR_CLIENT_ID = "ica-app-dcr-registration"
+DCR_CLIENT_SECRET = "uxLHTBvZ-Z2fV-SbrHl1E-tz7vB3jQFrwAdSLlbVMMu1rxDdvJU0s8KGu9d1wLS4"
+DCR_SOFTWARE_ID = "dcr-ica-app-template"
+REDIRECT_URI = "icacurity://app"
+ACR = "urn:se:curity:authentication:html-form:IcaCustomers"
+
+SL_PATH = "sverige/digx/mobile/shoppinglistservice/v1/shoppinglists"
+
+USER_AGENT = (
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) "
+    "AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148"
+)
