@@ -1,9 +1,12 @@
 import logging
 from datetime import datetime, timedelta, timezone
 from homeassistant.components.sensor import SensorEntity, SensorDeviceClass
-from .const import DOMAIN, DATA_ICA
+from homeassistant.core import callback
+from .const import CONF_STORE_ID, DOMAIN, DATA_ICA
+from .coordinator import IcaBonusCoordinator, IcaOffersCoordinator
 import asyncio  # lägg i toppen om inte redan finns
 from homeassistant.helpers.entity import EntityCategory
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 _LOGGER = logging.getLogger(__name__)
 SCAN_INTERVAL = timedelta(minutes=60)
@@ -19,14 +22,26 @@ async def async_setup_entry(hass, entry, async_add_entities):
     except Exception as e:
         _LOGGER.error("🚫 Misslyckades hämta listnamn: %s", e)
         list_name = "Okänd lista"
-        
 
+    bonus = IcaBonusCoordinator(hass, entry, api)
+    offers = IcaOffersCoordinator(hass, entry, api, list_id, entry.options.get(CONF_STORE_ID))
+    # async_refresh, not first_refresh: a failing extra must not block the list sensors.
+    await bonus.async_refresh()
+    await offers.async_refresh()
+
+    @callback
+    def _list_synced(event):
+        hass.async_create_task(offers.async_request_refresh())
+
+    entry.async_on_unload(hass.bus.async_listen("ica_shopping_sync_recorded", _list_synced))
 
     async_add_entities([
         ShoppingListSensor(hass, api, list_id, list_name),
         ICATokenSensor(hass, api, list_id, list_name),
         ICALastSyncSensor(hass, list_id, list_name),
         ICASyncStatusSensor(hass, list_id, list_name),
+        ICABonusSensor(bonus, list_id, list_name),
+        ICAOnSaleSensor(offers, list_id, list_name),
     ], False)
 
 class ShoppingListSensor(SensorEntity):
@@ -250,3 +265,66 @@ class ICASyncStatusSensor(SensorEntity):
     async def async_will_remove_from_hass(self):
         if hasattr(self, "_unsub_dispatcher"):
             self._unsub_dispatcher()
+
+
+def _device_info(list_id, list_name):
+    return {
+        "identifiers": {(DOMAIN, list_id)},
+        "name": f"ICA – {list_name}",
+        "manufacturer": "ICA",
+    }
+
+
+class ICABonusSensor(CoordinatorEntity, SensorEntity):
+    """Value of the Stammis bonus vouchers currently available on the account."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "bonus"
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_native_unit_of_measurement = "SEK"
+
+    def __init__(self, coordinator, list_id, list_name):
+        super().__init__(coordinator)
+        self._attr_unique_id = f"ica_bonus_{list_id}"
+        self._attr_device_info = _device_info(list_id, list_name)
+
+    @property
+    def native_value(self):
+        return (self.coordinator.data or {}).get("total_voucher_value")
+
+    @property
+    def extra_state_attributes(self):
+        data = dict(self.coordinator.data or {})
+        data.pop("total_voucher_value", None)
+        return data
+
+
+class ICAOnSaleSensor(CoordinatorEntity, SensorEntity):
+    """Unchecked list items that are on offer at the chosen favourite store."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "on_sale"
+    _attr_native_unit_of_measurement = "items"
+    _unrecorded_attributes = frozenset({"matches"})
+
+    def __init__(self, coordinator, list_id, list_name):
+        super().__init__(coordinator)
+        self._attr_unique_id = f"ica_on_sale_{list_id}"
+        self._attr_device_info = _device_info(list_id, list_name)
+
+    @property
+    def native_value(self):
+        data = self.coordinator.data
+        return len(data["matches"]) if data else None
+
+    @property
+    def extra_state_attributes(self):
+        data = self.coordinator.data or {}
+        store = data.get("store") or {}
+        return {
+            "store": store.get("name"),
+            "store_id": store.get("id"),
+            "offers_at_store": data.get("offer_count"),
+            "items": [m["item"] for m in data.get("matches", [])],
+            "matches": data.get("matches", []),
+        }

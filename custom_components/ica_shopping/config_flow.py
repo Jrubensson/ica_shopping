@@ -24,6 +24,7 @@ from .const import (
     CONF_LIST_ID,
     CONF_NEVER_ADD,
     CONF_REMOVE_STRIKED,
+    CONF_STORE_ID,
     CONF_TODO_ENTITY,
     DATA_ICA,
     DEFAULT_NEVER_ADD,
@@ -206,19 +207,44 @@ class ICAOptionsFlowHandler(OptionsFlow):
             new_list_id = user_input.get(CONF_LIST_ID, current_list_id)
             if new_list_id != current_list_id:
                 _LOGGER.warning("⚠️ ICA list changed from %s to %s.", current_list_id, new_list_id)
+            if CONF_STORE_ID not in user_input and entry.options.get(CONF_STORE_ID):
+                user_input[CONF_STORE_ID] = entry.options[CONF_STORE_ID]
             return self.async_create_entry(title="", data=user_input)
 
         lists: list[dict] = []
+        stores: list[dict] = []
         api = self.hass.data.get(DOMAIN, {}).get(DATA_ICA)
         if api is not None:
             try:
                 lists = await api.async_get_lists()
             except IcaError as err:
                 _LOGGER.warning("Could not fetch ICA lists for options: %s", err)
+            try:
+                stores = await api.async_get_favorite_stores()
+            except IcaError as err:
+                _LOGGER.warning("Could not fetch ICA favourite stores for options: %s", err)
 
         list_field = _list_selector(lists, current_list_id) if lists else str
         if lists and not any(list_matches(L, current_list_id) for L in lists):
             current_list_id = lists[0]["id"]
+
+        store_fields = {}
+        if stores:
+            current_store = entry.options.get(CONF_STORE_ID)
+            if not any(s["id"] == current_store for s in stores):
+                current_store = stores[0]["id"]
+            store_fields[vol.Required(CONF_STORE_ID, default=current_store)] = SelectSelector(
+                SelectSelectorConfig(
+                    options=[
+                        SelectOptionDict(
+                            value=s["id"],
+                            label=f"{s['name']}, {s['city']}" if s.get("city") else s["name"],
+                        )
+                        for s in stores
+                    ],
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            )
 
         return self.async_show_form(
             step_id="init",
@@ -236,5 +262,6 @@ class ICAOptionsFlowHandler(OptionsFlow):
                     CONF_NEVER_ADD,
                     default=entry.options.get(CONF_NEVER_ADD, DEFAULT_NEVER_ADD),
                 ): NEVER_ADD_SELECTOR,
+                **store_fields,
             }),
         )

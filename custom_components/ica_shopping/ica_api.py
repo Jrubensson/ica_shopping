@@ -30,14 +30,17 @@ from .const import (
     ACR,
     API_BASE,
     AUTHORIZE_ENDPOINT,
+    BONUS_PATH,
     DCR_CLIENT_ID,
     DCR_CLIENT_SECRET,
     DCR_SOFTWARE_ID,
     LOGIN_ENDPOINT,
     RECIPE_PATH,
+    OFFER_PATH,
     REDIRECT_URI,
     REGISTER_ENDPOINT,
     SL_PATH,
+    STORE_PATH,
     TOKEN_ENDPOINT,
     USER_AGENT,
 )
@@ -103,6 +106,61 @@ def _normalize_list(raw: dict) -> dict:
         "name": raw.get("title") or "",
         "rows": [_normalize_row(r) for r in raw.get("rows") or [] if isinstance(r, dict)],
     }
+
+
+def _amount(value: Any) -> float | None:
+    try:
+        return float(str(value).replace(",", ".")) if value is not None else None
+    except ValueError:
+        return None
+
+
+def parse_bonus(raw: dict) -> dict:
+    """Flatten bonusservice's /bonus/current into the fields the sensor exposes."""
+    balance = raw.get("accountBalance") or {}
+    summary = raw.get("discountSummary") or {}
+    return {
+        "total_voucher_value": _amount(balance.get("totalVoucherValue")),
+        "next_voucher_value": _amount(balance.get("nextVoucherValue")),
+        "remaining_days": balance.get("remainingDays"),
+        "active_vouchers": len((raw.get("vouchers") or {}).get("active") or []),
+        "total_discount": _amount(summary.get("totalDiscount")),
+        "number_of_purchases": summary.get("numberOfPurchases"),
+    }
+
+
+def format_offer(offer: dict) -> dict:
+    mechanics = offer.get("parsedMechanics") or {}
+    deal = " ".join(
+        v for v in (mechanics.get(f"value{i}") for i in range(1, 5)) if v
+    ).strip()
+    if deal and mechanics.get("unitSign"):
+        deal = f"{deal}{mechanics['unitSign']}"
+    return {
+        "name": offer.get("name"),
+        "brand": offer.get("brand"),
+        "deal": deal or None,
+        "valid_to": offer.get("validTo"),
+    }
+
+
+def offers_on_list(rows: list[dict], offers: list[dict]) -> list[dict]:
+    """Unchecked rows whose words (3+ letters) appear in an offer name."""
+    matches = []
+    for row in rows:
+        if row.get("isStriked"):
+            continue
+        item = (row.get("text") or "").strip()
+        words = [w for w in re.split(r"[^0-9a-zåäö]+", item.lower()) if len(w) >= 3]
+        if not words:
+            continue
+        hits = [
+            format_offer(o) for o in offers
+            if any(w in (o.get("name") or "").lower() for w in words)
+        ]
+        if hits:
+            matches.append({"item": item, "offers": hits})
+    return matches
 
 
 def _ts() -> str:
@@ -378,6 +436,28 @@ class ICAApi:
 
     async def async_get_recipe(self, recipe_id) -> dict:
         return await self._request("GET", f"{RECIPE_PATH}/recipes/{recipe_id}?api-version=2.0") or {}
+    async def async_get_bonus(self) -> dict:
+        return await self._request("GET", f"{BONUS_PATH}/bonus/current") or {}
+
+    async def async_get_favorite_stores(self) -> list[dict]:
+        """Favourite stores as [{id, name, city}], in the app's order (first = primary)."""
+        data = await self._request("GET", f"{STORE_PATH}/favorites") or {}
+        stores = []
+        for store_id in data.get("favoriteStores") or []:
+            try:
+                store = await self._request("GET", f"{STORE_PATH}/stores/{store_id}") or {}
+            except IcaApiError:
+                store = {}
+            stores.append({
+                "id": str(store.get("id") or store_id),
+                "name": store.get("marketingName") or f"Butik {store_id}",
+                "city": (store.get("address") or {}).get("city"),
+            })
+        return stores
+
+    async def async_get_store_offers(self, store_id: str) -> list[dict]:
+        data = await self._request("GET", f"{OFFER_PATH}/offersdiscounts/{store_id}") or {}
+        return [o for o in data.get("offers") or [] if isinstance(o, dict)]
 
     # --------------------------------------- non-raising (used by sync/sensors)
     async def fetch_lists(self) -> list[dict]:

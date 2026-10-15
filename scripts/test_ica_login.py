@@ -7,6 +7,7 @@ Uses Home Assistant's real aiohttp helpers, so session quirks behave as in HA.
 
 --dry-run stops before credentials are sent. --write-test adds, strikes, unstrikes and removes a probe item.
 --recipes fetches 2 random recipes and your favorites and prints the merged ingredients, without writing anything.
+--extras prints the bonus and the list items on offer at your favourite store.
 Credentials are prompted for and never stored.
 """
 from __future__ import annotations
@@ -15,6 +16,7 @@ import argparse
 import asyncio
 import getpass
 import importlib
+import json
 import logging
 import sys
 import tempfile
@@ -94,7 +96,7 @@ def trace_config() -> aiohttp.TraceConfig:
     return tc
 
 
-async def main(dry_run: bool, write_test: bool, recipes: bool) -> int:
+async def main(dry_run: bool, write_test: bool, recipes: bool, extras: bool) -> int:
     ica_api = load_ica_api()
 
     import homeassistant.helpers.aiohttp_client as ha_client
@@ -210,10 +212,60 @@ async def main(dry_run: bool, write_test: bool, recipes: bool) -> int:
 
         if recipes:
             await recipe_test(api)
+
+        if extras:
+            await print_extras(ica_api, api, lists)
         if "session" in shared:
             shared["session"].detach()
         await hass.async_stop(force=True)
     return 0
+
+
+async def print_extras(ica_api, api, lists) -> None:
+    print("Fetching bonus …")
+    try:
+        raw = await api.async_get_bonus()
+        print(f"  response keys: {sorted(raw)}")
+        print(f"  accountBalance: {json.dumps(raw.get('accountBalance'), ensure_ascii=False)}")
+        print(f"  discountSummary: {json.dumps(raw.get('discountSummary'), ensure_ascii=False)}")
+        bonus = ica_api.parse_bonus(raw)
+        print(f"✓ Bonus sensor state: {bonus['total_voucher_value']} SEK")
+        for key, value in bonus.items():
+            print(f"    {key}: {value}")
+    except ica_api.IcaError as err:
+        print(f"✗ Bonus failed: {err}")
+
+    print("Fetching favourite stores …")
+    try:
+        stores = await api.async_get_favorite_stores()
+    except ica_api.IcaError as err:
+        print(f"✗ Stores failed: {err}")
+        return
+    for store in stores:
+        print(f"  • {store['name']} ({store['city']})  id={store['id']}")
+    if not stores:
+        print("✗ No favourite stores; add one in the ICA app.")
+        return
+
+    store = stores[0]
+    print(f"Fetching offers at {store['name']} …")
+    try:
+        offers = await api.async_get_store_offers(store["id"])
+    except ica_api.IcaError as err:
+        print(f"✗ Offers failed: {err}")
+        return
+    print(f"✓ {len(offers)} offer(s).")
+    for offer in offers[:3]:
+        print(f"    e.g. {ica_api.format_offer(offer)}")
+
+    for lst in lists:
+        matches = ica_api.offers_on_list(lst["rows"], offers)
+        print(f"On-sale sensor for '{lst['name']}': {len(matches)} item(s)")
+        for match in matches:
+            deals = "; ".join(
+                f"{o['name']} ({o['brand'] or '-'}) {o['deal'] or ''}".strip() for o in match["offers"]
+            )
+            print(f"  • {match['item']}: {deals}")
 
 
 if __name__ == "__main__":
@@ -223,7 +275,9 @@ if __name__ == "__main__":
                         help="add a probe item to your first list, strike and unstrike it, then remove it")
     parser.add_argument("--recipes", action="store_true",
                         help="fetch 2 random recipes and print the merged ingredients (read-only)")
+    parser.add_argument("--extras", action="store_true",
+                        help="print the bonus and the list items on offer at your first favourite store")
     parser.add_argument("-v", "--verbose", action="store_true", help="show the integration's debug logs")
     args = parser.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.WARNING)
-    sys.exit(asyncio.run(main(args.dry_run, args.write_test, args.recipes)))
+    sys.exit(asyncio.run(main(args.dry_run, args.write_test, args.recipes, args.extras)))

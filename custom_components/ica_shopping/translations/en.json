@@ -49,12 +49,13 @@
     "step": {
       "init": {
         "title": "ICA Shopping Configuration",
-        "description": "Changing the list may sync existing to-do items to the new ICA list. Check the list first if needed.",
+        "description": "Changing the list may sync existing to-do items to the new ICA list. Check the list first if needed. The store is used by the On Sale sensor (your favourite stores in the ICA app).",
         "data": {
           "ica_list_id": "ICA shopping list",
           "todo_entity_id": "To-do list entity",
           "remove_striked": "Clear checked items after every sync",
-          "never_add": "Never add from recipes"
+          "never_add": "Never add from recipes",
+          "store_id": "Store for offers"
         },
         "data_description": {
           "never_add": "Pantry staples that ica_shopping.plan_dinners skips, matched on the ingredient name."
@@ -117,6 +118,50 @@
       "options": {
         "random": "Random",
         "favorites": "Favorites"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "bonus": {
+        "name": "Bonus",
+        "state_attributes": {
+          "next_voucher_value": {
+            "name": "Next voucher value"
+          },
+          "remaining_days": {
+            "name": "Days remaining"
+          },
+          "active_vouchers": {
+            "name": "Active vouchers"
+          },
+          "total_discount": {
+            "name": "Total discount"
+          },
+          "number_of_purchases": {
+            "name": "Number of purchases"
+          }
+        }
+      },
+      "on_sale": {
+        "name": "On sale",
+        "state_attributes": {
+          "store": {
+            "name": "Store"
+          },
+          "store_id": {
+            "name": "Store ID"
+          },
+          "offers_at_store": {
+            "name": "Offers at store"
+          },
+          "items": {
+            "name": "Items"
+          },
+          "matches": {
+            "name": "Matches"
+          }
+        }
       }
     }
   }
