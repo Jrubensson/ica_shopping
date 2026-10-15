@@ -57,5 +57,10 @@
         }
       }
     }
+  },
+  "exceptions": {
+    "not_logged_in": {
+      "message": "ICA Shopping är inte inloggad. Logga in igen under Inställningar → Enheter och tjänster → ICA Shopping."
+    }
   }
 }

@@ -57,5 +57,10 @@
         }
       }
     }
+  },
+  "exceptions": {
+    "not_logged_in": {
+      "message": "ICA Shopping is not logged in. Re-authenticate under Settings → Devices & Services → ICA Shopping."
+    }
   }
 }

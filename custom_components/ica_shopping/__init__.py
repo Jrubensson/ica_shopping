@@ -2,11 +2,16 @@ import logging
 from typing import Iterable
 
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
-from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.exceptions import (
+    ConfigEntryAuthFailed,
+    ConfigEntryNotReady,
+    HomeAssistantError,
+)
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.event import async_call_later
 from homeassistant.util import dt as dt_util
 from homeassistant.helpers import entity_registry
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import issue_registry as ir
 
 from .const import (
@@ -20,6 +25,8 @@ from .const import (
 from .ica_api import ICAApi, IcaAuthError, IcaError
 
 _LOGGER = logging.getLogger(__name__)
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 def _record_sync_result(hass, success: bool):
     """Store the outcome of a sync run so the Last Sync sensor can report it.
@@ -293,6 +300,17 @@ async def _perform_sync(hass, api: ICAApi, entry) -> None:
 
 
 async def async_setup(hass, config):
+    # Registered here, not per entry, so automations keep a valid action while login is broken.
+    async def handle_refresh(call):
+        sync = hass.data.get(DOMAIN, {}).get("sync")
+        if sync is None:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="not_logged_in"
+            )
+        _LOGGER.debug("🔄 ICA refresh triggered via service")
+        await sync()
+
+    hass.services.async_register(DOMAIN, "refresh", handle_refresh)
     return True
 
 
@@ -396,12 +414,7 @@ async def async_setup_entry(hass, entry):
     hass.data[DOMAIN]["unsub_listener"] = unsub_listener
     hass.data[DOMAIN]["debounce_unsub_getter"] = lambda: debounce_unsub
 
-    # --- refresh-tjänst ----------------------------------------------
-    async def handle_refresh(call):
-        _LOGGER.debug("🔄 ICA refresh triggered via service")
-        await _perform_sync(hass, api, entry)
-
-    hass.services.async_register(DOMAIN, "refresh", handle_refresh)
+    hass.data[DOMAIN]["sync"] = lambda: _perform_sync(hass, api, entry)
 
     await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
     entry.async_on_unload(entry.add_update_listener(_options_update_listener))
@@ -422,14 +435,12 @@ async def async_unload_entry(hass, entry):
 
     unload_ok = await hass.config_entries.async_unload_platforms(entry, ["sensor"])
 
-    if hass.services.has_service(DOMAIN, "refresh"):
-        hass.services.async_remove(DOMAIN, "refresh")
-
     if DOMAIN in hass.data:
         hass.data[DOMAIN].pop("unsub_listener", None)
         hass.data[DOMAIN].pop("debounce_unsub_getter", None)
         hass.data[DOMAIN].pop("sync_in_progress", None)
         hass.data[DOMAIN].pop("current_options", None)
+        hass.data[DOMAIN].pop("sync", None)
 
     return unload_ok
 

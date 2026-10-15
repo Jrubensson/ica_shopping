@@ -7,3 +7,6 @@ add_item:
     text:
       description: "Item text to add, e.g. 'kaffe'"
       example: "kaffe"
+
+refresh:
+  description: "Sync the ICA shopping list with the configured todo list in both directions"
