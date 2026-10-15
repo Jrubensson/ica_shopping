@@ -81,6 +81,34 @@ mode: single
 
 ```
 
+## Bonus and Offers Sensors
+
+Two more sensors appear on the same device:
+
+- **Bonus** — the value (SEK) of the Stammis bonus vouchers currently on your account. Attributes: `next_voucher_value`, `remaining_days`, `active_vouchers`, `total_discount`, `number_of_purchases`. Polled every 6 hours.
+- **On Sale** — how many unchecked items on your list are on offer at your favourite ICA store. Attributes: `store`, `items` (the matching list items) and `matches` (each item with the offers it matched: name, brand, deal, valid to). Offers are fetched every 6 hours; the list is re-checked hourly and after every sync.
+
+The store is taken from your favourite stores in the ICA app (the first one by default). To use another favourite, pick it under **Settings → Devices & Services → ICA Shopping → Configure**.
+
+Items are matched on words of three or more letters, so "mjölk" matches any offer whose name contains "mjölk". Expect the odd false positive.
+
+If ICA's bonus or offer services fail, only these two sensors become unavailable; list sync is unaffected.
+
+```yaml
+automation:
+  - alias: "Tell me what's on sale"
+    trigger:
+      - platform: numeric_state
+        entity_id: sensor.ica_handlingslista_on_sale
+        above: 0
+    action:
+      - service: notify.notify
+        data:
+          message: >
+            On sale at {{ state_attr('sensor.ica_handlingslista_on_sale', 'store') }}:
+            {{ state_attr('sensor.ica_handlingslista_on_sale', 'items') | join(', ') }}
+```
+
 ## Detecting Sync Failures
 
 The integration exposes a **Sync Status** sensor whose state is `success` or `failed`, so you can be notified when a sync fails (for example if ICA is unreachable or the login needs to be renewed).

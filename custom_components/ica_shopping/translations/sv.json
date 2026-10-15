@@ -49,11 +49,12 @@
     "step": {
       "init": {
         "title": "ICA Shopping – Konfiguration",
-        "description": "Om du byter lista kan befintliga att göra-poster synkas till den nya ICA-listan. Kontrollera listan först vid behov.",
+        "description": "Om du byter lista kan befintliga att göra-poster synkas till den nya ICA-listan. Kontrollera listan först vid behov. Butiken används av sensorn På extrapris (dina favoritbutiker i ICA-appen).",
         "data": {
           "ica_list_id": "ICA-inköpslista",
           "todo_entity_id": "Att göra-lista (entity)",
-          "remove_striked": "Rensa avbockade och klara varor"
+          "remove_striked": "Rensa avbockade och klara varor",
+          "store_id": "Butik för erbjudanden"
         }
       }
     }
@@ -61,6 +62,50 @@
   "exceptions": {
     "not_logged_in": {
       "message": "ICA Shopping är inte inloggad. Logga in igen under Inställningar → Enheter och tjänster → ICA Shopping."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "bonus": {
+        "name": "Bonus",
+        "state_attributes": {
+          "next_voucher_value": {
+            "name": "Nästa bonuscheck"
+          },
+          "remaining_days": {
+            "name": "Dagar kvar"
+          },
+          "active_vouchers": {
+            "name": "Aktiva bonuscheckar"
+          },
+          "total_discount": {
+            "name": "Total rabatt"
+          },
+          "number_of_purchases": {
+            "name": "Antal köp"
+          }
+        }
+      },
+      "on_sale": {
+        "name": "På extrapris",
+        "state_attributes": {
+          "store": {
+            "name": "Butik"
+          },
+          "store_id": {
+            "name": "Butiks-ID"
+          },
+          "offers_at_store": {
+            "name": "Erbjudanden i butiken"
+          },
+          "items": {
+            "name": "Varor"
+          },
+          "matches": {
+            "name": "Träffar"
+          }
+        }
+      }
     }
   }
 }
