@@ -5,7 +5,7 @@ Uses Home Assistant's real aiohttp helpers, so session quirks behave as in HA.
     uv run --python 3.13 --with homeassistant scripts/test_ica_login.py
     uv run --python 3.13 --with homeassistant scripts/test_ica_login.py --dry-run
 
---dry-run stops before credentials are sent. Credentials are prompted for and never stored.
+--dry-run stops before credentials are sent. --write-test adds and removes a probe item. Credentials are prompted for and never stored.
 """
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ import logging
 import sys
 import tempfile
 import types
+import uuid
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -52,7 +53,7 @@ def trace_config() -> aiohttp.TraceConfig:
     return tc
 
 
-async def main(dry_run: bool) -> int:
+async def main(dry_run: bool, write_test: bool) -> int:
     ica_api = load_ica_api()
 
     import homeassistant.helpers.aiohttp_client as ha_client
@@ -72,7 +73,15 @@ async def main(dry_run: bool) -> int:
         return real_create(hass, *args, **kwargs)
 
     ica_api.async_create_clientsession = traced_create
-    ica_api.async_get_clientsession = lambda hass: traced_create(hass, auto_cleanup=False)
+    shared: dict = {}
+
+    def shared_session(hass):
+        # Mirrors HA's single shared session instead of opening one per request.
+        if "session" not in shared:
+            shared["session"] = traced_create(hass, auto_cleanup=False)
+        return shared["session"]
+
+    ica_api.async_get_clientsession = shared_session
 
     if dry_run:
         username, password = "000000000000", ""
@@ -121,6 +130,23 @@ async def main(dry_run: bool) -> int:
         for lst in lists:
             print(f"  • {lst['name']}  ({len(lst['rows'])} rows)  id={lst['id']}")
         print(f"✓ {len(lists)} list(s) found.")
+
+        if write_test and lists:
+            target = lists[0]
+            probe = f"ica-shopping test {uuid.uuid4().hex[:6]}"
+            print(f"Adding '{probe}' to {target['name']} …")
+            assert await api.add_to_list(target["id"], probe), "add failed"
+            after_add = await api.async_get_list(target["id"])
+            row = next((r for r in after_add["rows"] if r["text"] == probe), None)
+            assert row, "added row not found on re-fetch"
+            print(f"✓ Added (row id {row['id']}).")
+            print("Removing it again …")
+            assert await api.remove_item(target["id"], row["id"]), "remove failed"
+            after_remove = await api.async_get_list(target["id"])
+            assert not any(r["text"] == probe for r in after_remove["rows"]), "row still present"
+            print("✓ Removed. Add and remove both work.")
+        if "session" in shared:
+            shared["session"].detach()
         await hass.async_stop(force=True)
     return 0
 
@@ -128,7 +154,9 @@ async def main(dry_run: bool) -> int:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--dry-run", action="store_true", help="stop before sending credentials")
+    parser.add_argument("--write-test", action="store_true",
+                        help="add a probe item to your first list, then remove it")
     parser.add_argument("-v", "--verbose", action="store_true", help="show the integration's debug logs")
     args = parser.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.WARNING)
-    sys.exit(asyncio.run(main(args.dry_run)))
+    sys.exit(asyncio.run(main(args.dry_run, args.write_test)))
