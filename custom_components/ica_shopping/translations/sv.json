@@ -55,10 +55,12 @@
           "todo_entity_id": "Att göra-lista (entity)",
           "remove_striked": "Rensa avbockade varor efter varje synk",
           "never_add": "Lägg aldrig till från recept",
-          "store_id": "Butik för erbjudanden"
+          "store_id": "Butik för erbjudanden",
+          "calendar_entity_id": "Standardkalender"
         },
         "data_description": {
-          "never_add": "Basvaror som ica_shopping.plan_dinners hoppar över, matchat på ingrediensnamnet."
+          "never_add": "Basvaror som ica_shopping.plan_dinners hoppar över, matchat på ingrediensnamnet.",
+          "calendar_entity_id": "Kalender som ica_shopping.plan_dinners också lägger händelser i när ingen kalender anges. Bara kalendrar som kan skapa händelser visas; är den inte tillgänglig när du planerar hoppas den över. ICA:s middagskalender visar alltid planen, så lämna tomt om du inte vill ha middagarna i en annan kalender också."
         }
       }
     }
@@ -77,7 +79,7 @@
       "message": "{entity_id} kan inte skapa händelser. Välj en kalender som stödjer nya händelser, t.ex. Local Calendar, Google Calendar eller CalDAV."
     },
     "calendar_event_failed": {
-      "message": "Kunde inte lägga in middagarna i kalendern ({error}). {created} av {total} händelser skapades, och {added} ingredienser lades redan till i {list}, så kör inte åtgärden igen utan att ta bort dem först."
+      "message": "Kunde inte lägga in middagarna i kalendern ({error}). {created} av {total} händelser skapades. Middagarna finns redan i ICA:s middagskalender och {added} ingredienser lades redan till i {list}, så planera dem inte igen – lägg in de saknade händelserna för hand."
     },
     "no_favorite_store": {
       "message": "Ingen favoritbutik hittades. Lägg till en butik i ICA-appen och välj den under Inställningar → Enheter och tjänster → ICA Shopping."
@@ -90,6 +92,15 @@
     },
     "forget_needs_target": {
       "message": "Ange vilken middag som ska glömmas — ett recept-id, en del av titeln, eller ett datum."
+    },
+    "calendar_unavailable": {
+      "message": "{entity_id} är inte tillgänglig eller finns inte, så middagarna kan inte läggas in där. Inget lades till i ICA-listan."
+    },
+    "dinner_edit_unsupported": {
+      "message": "En middag kan bara flyttas till en annan dag eller byta namn. Beskrivning, längd, upprepning och plats kommer från receptet och kan inte ändras här."
+    },
+    "dinner_not_found": {
+      "message": "Middagen finns inte längre i middagsminnet ({uid})."
     }
   },
   "services": {
@@ -175,11 +186,11 @@
         },
         "calendar": {
           "name": "Kalender",
-          "description": "Valfritt. Lägger in en heldagshändelse per middag på dagarna i följd, med tillagningstid, receptlänk och ingredienser."
+          "description": "Valfritt. Lägger också in en heldagshändelse per middag i den här kalendern, med tillagningstid, receptlänk och ingredienser. Standard är kalendern i inställningarna."
         },
         "start_date": {
           "name": "Startdatum",
-          "description": "Dagen för första middagen i kalendern. Standard är i morgon."
+          "description": "Dagen för första middagen. Standard är i morgon."
         },
         "preview": {
           "name": "Förhandsgranska",
@@ -245,6 +256,11 @@
             "name": "Träffar"
           }
         }
+      }
+    },
+    "calendar": {
+      "dinners": {
+        "name": "Middagar"
       }
     }
   },

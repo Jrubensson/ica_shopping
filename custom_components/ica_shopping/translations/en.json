@@ -55,10 +55,12 @@
           "todo_entity_id": "To-do list entity",
           "remove_striked": "Clear checked items after every sync",
           "never_add": "Never add from recipes",
-          "store_id": "Store for offers"
+          "store_id": "Store for offers",
+          "calendar_entity_id": "Default calendar"
         },
         "data_description": {
-          "never_add": "Pantry staples that ica_shopping.plan_dinners skips, matched on the ingredient name."
+          "never_add": "Pantry staples that ica_shopping.plan_dinners skips, matched on the ingredient name.",
+          "calendar_entity_id": "Calendar that ica_shopping.plan_dinners also adds events to when no calendar is given. Only calendars that can create events are listed; if it is unavailable when you plan, it is skipped. The ICA dinner calendar always shows the plan, so leave this empty unless you want the dinners in another calendar too."
         }
       }
     }
@@ -77,7 +79,7 @@
       "message": "{entity_id} can't create events. Pick a calendar that supports new events, such as Local Calendar, Google Calendar or CalDAV."
     },
     "calendar_event_failed": {
-      "message": "Couldn't add the dinners to the calendar ({error}). {created} of {total} events were created, and {added} ingredients were already added to {list}, so don't run the action again without removing them first."
+      "message": "Couldn't add the dinners to the calendar ({error}). {created} of {total} events were created. The dinners are already in the ICA dinner calendar and {added} ingredients were already added to {list}, so don't plan them again — add the missing events by hand."
     },
     "no_favorite_store": {
       "message": "No favourite store found. Add a store in the ICA app and pick it under Settings → Devices & Services → ICA Shopping."
@@ -90,6 +92,15 @@
     },
     "forget_needs_target": {
       "message": "Say which dinner to forget — a recipe id, part of the title, or a date."
+    },
+    "calendar_unavailable": {
+      "message": "{entity_id} is unavailable or doesn't exist, so the dinners can't be added to it. Nothing was added to the ICA list."
+    },
+    "dinner_edit_unsupported": {
+      "message": "A dinner can only be moved to another day or renamed. Its description, length, repeat and location come from the recipe and can't be changed here."
+    },
+    "dinner_not_found": {
+      "message": "That dinner isn't in the dinner memory any more ({uid})."
     }
   },
   "services": {
@@ -175,11 +186,11 @@
         },
         "calendar": {
           "name": "Calendar",
-          "description": "Optional. Adds one all-day event per dinner on consecutive days, with the cooking time, recipe link and ingredients."
+          "description": "Optional. Also adds one all-day event per dinner to this calendar, with the cooking time, recipe link and ingredients. Defaults to the calendar set in the options."
         },
         "start_date": {
           "name": "Start date",
-          "description": "Day of the first dinner in the calendar. Defaults to tomorrow."
+          "description": "Day of the first dinner. Defaults to tomorrow."
         },
         "preview": {
           "name": "Preview",
@@ -245,6 +256,11 @@
             "name": "Matches"
           }
         }
+      }
+    },
+    "calendar": {
+      "dinners": {
+        "name": "Dinners"
       }
     }
   },

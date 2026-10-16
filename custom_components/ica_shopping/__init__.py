@@ -7,7 +7,12 @@ from typing import Iterable
 import voluptuous as vol
 
 from homeassistant.components.calendar import CalendarEntityFeature
-from homeassistant.const import ATTR_SUPPORTED_FEATURES, CONF_PASSWORD, CONF_USERNAME
+from homeassistant.const import (
+    ATTR_SUPPORTED_FEATURES,
+    CONF_PASSWORD,
+    CONF_USERNAME,
+    STATE_UNAVAILABLE,
+)
 from homeassistant.core import ServiceCall, ServiceResponse, SupportsResponse
 from homeassistant.exceptions import (
     ConfigEntryAuthFailed,
@@ -23,6 +28,7 @@ from homeassistant.helpers import issue_registry as ir
 
 from .const import (
     CONF_AUTH,
+    CONF_CALENDAR,
     CONF_LIST_ID,
     CONF_NEVER_ADD,
     CONF_REMOVE_STRIKED,
@@ -47,6 +53,7 @@ from .recipes import (
 _LOGGER = logging.getLogger(__name__)
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+PLATFORMS = ["sensor", "calendar"]
 
 # get_offers is called on each turn of a conversation; the store's offers only change daily,
 # so a short cache keeps a back-and-forth from hammering ICA's API. The sensor polls every 6 h.
@@ -112,6 +119,33 @@ def _drop_ica_rows(ica: dict, row_ids: list) -> None:
 
 def _ha_ref(item: dict) -> str:
     return item.get("uid") or item["summary"]
+
+
+def _is_own_calendar(hass, entity_id: str) -> bool:
+    entry = entity_registry.async_get(hass).async_get(entity_id)
+    return entry is not None and entry.platform == DOMAIN
+
+
+def _pick_calendar(hass, requested: str | None, options: dict) -> str | None:
+    """The external calendar to write the plan to, checked before the ICA list is touched."""
+    calendar = requested or options.get(CONF_CALENDAR)
+    if not calendar or _is_own_calendar(hass, calendar):
+        # The dinner calendar already shows everything in the memory.
+        return None
+    state = hass.states.get(calendar)
+    available = state is not None and state.state != STATE_UNAVAILABLE
+    writable = available and state.attributes.get(ATTR_SUPPORTED_FEATURES, 0) & CalendarEntityFeature.CREATE_EVENT
+    if writable:
+        return calendar
+    if not requested:
+        # A bad Default calendar option must not block planning; the dinner calendar still gets the plan.
+        _LOGGER.warning("⚠️ Standardkalendern %s går inte att skriva till – hoppar över den", calendar)
+        return None
+    raise HomeAssistantError(
+        translation_domain=DOMAIN,
+        translation_key="calendar_not_writable" if available else "calendar_unavailable",
+        translation_placeholders={"entity_id": calendar},
+    )
 
 
 async def _trigger_sensor_update(hass, list_id):
@@ -469,17 +503,7 @@ async def async_setup(hass, config):
         memory = data.get("memory")
         avoid_days = call.data.get("avoid_days", 0) or 0
         avoid_ids = memory.recent_ids(avoid_days) if memory is not None else None
-        calendar = call.data.get("calendar")
-        if calendar and not preview:
-            # Checked up front so a bad calendar choice leaves the ICA list untouched.
-            state = hass.states.get(calendar)
-            features = state.attributes.get(ATTR_SUPPORTED_FEATURES, 0) if state else 0
-            if not features & CalendarEntityFeature.CREATE_EVENT:
-                raise HomeAssistantError(
-                    translation_domain=DOMAIN,
-                    translation_key="calendar_not_writable",
-                    translation_placeholders={"entity_id": calendar},
-                )
+        calendar = None if preview else _pick_calendar(hass, call.data.get("calendar"), options)
         try:
             # Not held across sync() below, which takes the same lock.
             async with data.setdefault("sync_lock", asyncio.Lock()):
@@ -511,12 +535,18 @@ async def async_setup(hass, config):
             # Push the new rows to the to-do entity now instead of on the next refresh.
             await sync()
 
-        if calendar and not preview:
+        if not preview:
             start = call.data.get("start_date") or dt_util.now().date() + dt.timedelta(days=1)
+            days = [start + dt.timedelta(days=offset) for offset in range(len(result["dinners"]))]
+            for day, dinner in zip(days, result["dinners"]):
+                dinner["date"] = day.isoformat()
+            if memory is not None:
+                # Before the external calendar, so a failure there still leaves the plan remembered.
+                await memory.async_record(result["dinners"], result.get("list"))
+        if calendar and not preview:
             created = 0
             try:
-                for offset, (recipe, dinner) in enumerate(zip(recipes, result["dinners"])):
-                    day = start + dt.timedelta(days=offset)
+                for day, recipe, dinner in zip(days, recipes, result["dinners"]):
                     await hass.services.async_call("calendar", "create_event", {
                         "entity_id": calendar,
                         "summary": dinner["title"] or "Middag",
@@ -524,7 +554,6 @@ async def async_setup(hass, config):
                         "start_date": day,
                         "end_date": day + dt.timedelta(days=1),
                     }, blocking=True)
-                    dinner["date"] = day.isoformat()
                     created += 1
             except Exception as err:
                 raise HomeAssistantError(
@@ -538,9 +567,6 @@ async def async_setup(hass, config):
                         "list": result["list"] or "",
                     },
                 ) from err
-        if not preview and memory is not None:
-            # Remember what was planned, so the next run can avoid repeats.
-            await memory.async_record(result.get("dinners") or [], result.get("list"))
         return result
 
     # --- Dinner memory: history and preferences ---------------------------------
@@ -760,7 +786,7 @@ async def async_setup_entry(hass, entry):
         hass, api, entry, clear_checked
     )
 
-    await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_options_update_listener))
 
     return True
@@ -777,7 +803,7 @@ async def async_unload_entry(hass, entry):
     if "unsub_listener" in hass.data.get(DOMAIN, {}):
         hass.data[DOMAIN]["unsub_listener"]()
 
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, ["sensor"])
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     ir.async_delete_issue(hass, DOMAIN, "list_full")
 
     if DOMAIN in hass.data:

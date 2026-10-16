@@ -12,7 +12,8 @@
   "iot_class": "cloud_polling",
   "image": "local/icon.png",
   "platforms": [
-    "sensor"
+    "sensor",
+    "calendar"
   ],
   "config_flow": true,
   "options_flow": true

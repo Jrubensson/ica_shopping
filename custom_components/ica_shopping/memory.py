@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+from collections.abc import Callable
 
-from homeassistant.core import HomeAssistant
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
@@ -32,6 +33,13 @@ class DinnerMemory:
         self._store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
         self.history: list[dict] = []
         self.preferences: list[str] = []
+        self._listeners: list[Callable[[], None]] = []
+
+    @callback
+    def async_add_listener(self, update_callback: Callable[[], None]) -> CALLBACK_TYPE:
+        """Call `update_callback` whenever the memory changes."""
+        self._listeners.append(update_callback)
+        return lambda: self._listeners.remove(update_callback)
 
     async def async_load(self) -> "DinnerMemory":
         data = await self._store.async_load() or {}
@@ -56,6 +64,8 @@ class DinnerMemory:
         await self._store.async_save(
             {"history": self.history, "preferences": self.preferences}
         )
+        for update_callback in list(self._listeners):
+            update_callback()
 
     def recent_ids(self, days: int) -> set[str]:
         """Recipe ids eaten within the last `days` days (0 = nothing)."""
@@ -64,7 +74,7 @@ class DinnerMemory:
         cutoff = dt_util.now().date() - dt.timedelta(days=days)
         ids: set[str] = set()
         for entry in self.history:
-            parsed = _parse_date(entry.get("date"))
+            parsed = parse_date(entry.get("date"))
             if parsed is not None and parsed >= cutoff:
                 ids.add(str(entry["id"]))
         return ids
@@ -90,6 +100,9 @@ class DinnerMemory:
                     "title": dinner.get("title"),
                     "date": date,
                     "list": list_name,
+                    "url": dinner.get("url"),
+                    "cooking_time": dinner.get("cooking_time"),
+                    "ingredients": dinner.get("ingredients") or [],
                 }
             )
             known.add(key)
@@ -103,7 +116,7 @@ class DinnerMemory:
     def _trim(self) -> None:
         cutoff = dt_util.now().date() - dt.timedelta(days=HISTORY_MAX_AGE_DAYS)
         kept = [
-            e for e in self.history if (parsed := _parse_date(e.get("date"))) and parsed >= cutoff
+            e for e in self.history if (parsed := parse_date(e.get("date"))) and parsed >= cutoff
         ]
         self.history = kept[-HISTORY_MAX:]
 
@@ -159,6 +172,36 @@ class DinnerMemory:
             _LOGGER.debug("🍽️ %d middagar borttagna ur minnet", removed)
         return removed
 
+    def find(self, recipe_id: str, date: str) -> dict | None:
+        return next(
+            (e for e in self.history if str(e.get("id")) == recipe_id and e.get("date") == date),
+            None,
+        )
+
+    async def async_remove_entry(self, recipe_id: str, date: str) -> bool:
+        entry = self.find(recipe_id, date)
+        if entry is None:
+            return False
+        self.history.remove(entry)
+        await self._async_save()
+        return True
+
+    async def async_update_entry(
+        self, recipe_id: str, date: str, *, new_date: str | None = None, title: str | None = None
+    ) -> bool:
+        """Move a dinner to another day and/or rename it."""
+        entry = self.find(recipe_id, date)
+        if entry is None:
+            return False
+        if new_date and new_date != date:
+            if (clash := self.find(recipe_id, new_date)) is not None:
+                self.history.remove(clash)
+            entry["date"] = new_date
+        if title:
+            entry["title"] = title
+        await self._async_save()
+        return True
+
     async def async_clear(
         self, history: bool = True, preferences: bool = True
     ) -> dict:
@@ -175,13 +218,15 @@ class DinnerMemory:
         return removed
 
     def as_dict(self) -> dict:
+        # Ingredients are for the calendar; leaving them out keeps GetMemory small for the LLM.
+        history = [{k: v for k, v in e.items() if k != "ingredients"} for e in self.history]
         return {
-            "history": sorted(self.history, key=lambda e: e.get("date") or "", reverse=True),
+            "history": sorted(history, key=lambda e: e.get("date") or "", reverse=True),
             "preferences": list(self.preferences),
         }
 
 
-def _parse_date(value) -> dt.date | None:
+def parse_date(value) -> dt.date | None:
     if not isinstance(value, str) or not value:
         return None
     try:

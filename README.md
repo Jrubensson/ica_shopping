@@ -111,15 +111,15 @@ mode: single
 | `count` | `5` | Number of dinners, 1–10 |
 | `source` | `random` | `random` ICA recipes, or `favorites` saved in the ICA app |
 | `list` | the synced list | ICA list name; a name that doesn't exist is created |
-| `calendar` | – | Calendar entity; adds one all-day event per dinner on consecutive days |
-| `start_date` | tomorrow | Day of the first dinner in the calendar |
+| `calendar` | the **Default calendar** option | Another calendar entity; also adds one all-day event per dinner there |
+| `start_date` | tomorrow | Day of the first dinner; the rest follow on consecutive days |
 | `preview` | `false` | Return the menu and merged ingredients without changing the list |
 | `recipes` | – | Recipe ids to use, e.g. `"123,456"`. Overrides `count` and `source`, so a previewed menu can be committed exactly |
 | `avoid_days` | `0` | Skip recipes eaten within this many days (uses the dinner memory) |
 
 Ingredients already on the list are skipped, as are pantry staples listed under **Never add from recipes** in the integration's options (default: salt, peppar, svartpeppar, vatten, olja, olivolja, smör).
 
-Each calendar event has the recipe title as its name and the cooking time, recipe link and ingredients in its description. The calendar must support creating events (Local Calendar, Google Calendar and CalDAV do); otherwise the action fails before anything is added to the ICA list.
+Committed dinners always appear in the integration's own **Dinners** calendar (see [Dinner Calendar](#dinner-calendar)). To have them in another calendar too, set `calendar` or pick a **Default calendar** in the integration's options; the Assist tool uses that option. Each event there has the recipe title as its name and the cooking time, recipe link and ingredients in its description. A `calendar` you pass must be available and support creating events (Local Calendar, Google Calendar and CalDAV do); otherwise the action fails before anything is added to the ICA list. The **Default calendar** option only offers calendars that can create events, and if it is unavailable or no longer exists when you plan, it is skipped with a warning in the log, so planning still works.
 
 This automation plans Monday–Friday every Sunday morning, puts the dinners in a calendar and sends the menu to your phone:
 
@@ -148,7 +148,7 @@ automation:
             {{ plan.added | count }} items added to {{ plan.list }}.
 ```
 
-The response looks like `{"list": "Handla", "preview": false, "dinners": [{"id": 719920, "title": …, "cooking_time": …, "url": …, "ingredients": […], "date": "2026-10-19"}], "ingredients": ["5 dl mjölk", …], "added": ["5 dl mjölk", …], "skipped_list_full": []}`; `date` is only included when `calendar` is set, and `added` is empty when `preview` is true.
+The response looks like `{"list": "Handla", "preview": false, "dinners": [{"id": 719920, "title": …, "cooking_time": …, "url": …, "ingredients": […], "date": "2026-10-19"}], "ingredients": ["5 dl mjölk", …], "added": ["5 dl mjölk", …], "skipped_list_full": []}`; `date` is left out and `added` is empty when `preview` is true.
 
 ### Preview, then commit what you picked
 
@@ -177,7 +177,7 @@ An ingredient whose only row on the list is checked off is unchecked instead of 
 
 The integration remembers what you have eaten and what you prefer, so `plan_dinners` can avoid repeats and an assistant can answer questions about past dinners. It is kept in Home Assistant's `.storage`, is included in backups, and survives restarts.
 
-- **History** — every dinner `plan_dinners` adds is recorded automatically (recipe id, title, date, list), trimmed to the last 300 dinners / 120 days.
+- **History** — every dinner `plan_dinners` adds is recorded automatically on the day it is planned for (recipe id, title, date, list, cooking time, link), trimmed to the last 300 dinners / 120 days. Planned dinners count as eaten for `avoid_days`.
 - **Preferences** — free-text rules such as `Oskar: ingen fisk` or `Vardagar: vegetariskt`.
 - **`avoid_days`** — set it on `plan_dinners` to skip recipes eaten recently; `14` is a good default for a weekly plan. It works for both `random` and `favorites` (`favorites` is filtered on the known recipe ids).
 
@@ -201,6 +201,16 @@ Use `forget_dinner` to correct a wrong entry (say you cooked something else) and
 
 Only committed plans are remembered — `preview: true` never touches the memory.
 
+### Dinner Calendar
+
+The integration adds a calendar entity, **Dinners** (e.g. `calendar.ica_handlingslista_dinners`), that shows the dinner history as all-day events — past dinners and the ones planned ahead, with the cooking time, recipe link and ingredients in each description. It reads straight from the memory, so it needs no other calendar integration, and like the memory it keeps the last 120 days.
+
+Editing it edits the memory: move a dinner to another day, rename it, or delete it if you never cooked it. `avoid_days`, `get_memory` and the Assist tools follow along. Other changes — the description, a longer or timed event, a repeat or a location — are refused with an error rather than silently lost. New events can't be created here; dinners come from `plan_dinners`. Picking this calendar as the `calendar` of `plan_dinners` is harmless — it already shows the plan, so nothing extra is added.
+
+If an external calendar fails part-way, the dinners are still remembered and shown here; add the missing events to the other calendar by hand rather than planning them again.
+
+Dinners remembered before version 1.8.0 were all stored on the day they were planned, so an older weekly plan shows up as several dinners on one day. Move or delete them if they bother you; new plans get one dinner per day.
+
 ## Assist tools
 
 On Home Assistant 2026.8 and newer the integration contributes its own tools to Assist through the `llm` platform, so any voice assistant or LLM conversation agent can use them directly - no scripts, blueprints or YAML to copy. Ask *"what is on offer?"* or *"what should we eat this week?"* and the agent can answer.
@@ -209,7 +219,7 @@ On Home Assistant 2026.8 and newer the integration contributes its own tools to 
 |---|---|
 | `ica_shopping__GetOffers` | This week's offers at the favourite store, and the bonus balance |
 | `ica_shopping__GetMemory` | Recently eaten dinners and the saved preferences |
-| `ica_shopping__PlanDinners` | Suggest a menu from ICA recipes. `preview: true` returns it without changing the list; commit with `recipes` set to the ids you agreed on |
+| `ica_shopping__PlanDinners` | Suggest a menu from ICA recipes. `preview: true` returns it without changing the list; commit with `recipes` set to the ids you agreed on, optionally from a `start_date`. Committed dinners go in the Dinners calendar and the **Default calendar** |
 | `ica_shopping__SetPreference` / `RemovePreference` | Remember or drop a food preference |
 | `ica_shopping__ForgetDinner` / `ClearMemory` | Correct the dinner memory |
 
