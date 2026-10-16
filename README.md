@@ -201,6 +201,20 @@ Use `forget_dinner` to correct a wrong entry (say you cooked something else) and
 
 Only committed plans are remembered — `preview: true` never touches the memory.
 
+## Assist tools
+
+On Home Assistant 2026.8 and newer the integration contributes its own tools to Assist through the `llm` platform, so any voice assistant or LLM conversation agent can use them directly - no scripts, blueprints or YAML to copy. Ask *"what is on offer?"* or *"what should we eat this week?"* and the agent can answer.
+
+| Tool | |
+|---|---|
+| `ica_shopping__GetOffers` | This week's offers at the favourite store, and the bonus balance |
+| `ica_shopping__GetMemory` | Recently eaten dinners and the saved preferences |
+| `ica_shopping__PlanDinners` | Suggest a menu from ICA recipes. `preview: true` returns it without changing the list; commit with `recipes` set to the ids you agreed on |
+| `ica_shopping__SetPreference` / `RemovePreference` | Remember or drop a food preference |
+| `ica_shopping__ForgetDinner` / `ClearMemory` | Correct the dinner memory |
+
+They wrap the actions above, so they follow the same rules, and they ship with a short prompt fragment that tells the model to read the offers and the memory before suggesting meals and never to add anything before the user agrees. The tools are only offered when an assistant requests the built-in Assist API; on Home Assistant older than 2026.8 they are simply not registered and the actions keep working.
+
 ## Bonus and Offers Sensors
 
 Two more sensors appear on the same device:
