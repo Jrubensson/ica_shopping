@@ -74,7 +74,7 @@ class DinnerMemory:
         cutoff = dt_util.now().date() - dt.timedelta(days=days)
         ids: set[str] = set()
         for entry in self.history:
-            parsed = _parse_date(entry.get("date"))
+            parsed = parse_date(entry.get("date"))
             if parsed is not None and parsed >= cutoff:
                 ids.add(str(entry["id"]))
         return ids
@@ -115,7 +115,7 @@ class DinnerMemory:
     def _trim(self) -> None:
         cutoff = dt_util.now().date() - dt.timedelta(days=HISTORY_MAX_AGE_DAYS)
         kept = [
-            e for e in self.history if (parsed := _parse_date(e.get("date"))) and parsed >= cutoff
+            e for e in self.history if (parsed := parse_date(e.get("date"))) and parsed >= cutoff
         ]
         self.history = kept[-HISTORY_MAX:]
 
@@ -223,7 +223,7 @@ class DinnerMemory:
         }
 
 
-def _parse_date(value) -> dt.date | None:
+def parse_date(value) -> dt.date | None:
     if not isinstance(value, str) or not value:
         return None
     try:

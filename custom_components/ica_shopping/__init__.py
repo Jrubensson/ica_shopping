@@ -7,7 +7,12 @@ from typing import Iterable
 import voluptuous as vol
 
 from homeassistant.components.calendar import CalendarEntityFeature
-from homeassistant.const import ATTR_SUPPORTED_FEATURES, CONF_PASSWORD, CONF_USERNAME
+from homeassistant.const import (
+    ATTR_SUPPORTED_FEATURES,
+    CONF_PASSWORD,
+    CONF_USERNAME,
+    STATE_UNAVAILABLE,
+)
 from homeassistant.core import ServiceCall, ServiceResponse, SupportsResponse
 from homeassistant.exceptions import (
     ConfigEntryAuthFailed,
@@ -476,7 +481,14 @@ async def async_setup(hass, config):
         memory = data.get("memory")
         avoid_days = call.data.get("avoid_days", 0) or 0
         avoid_ids = memory.recent_ids(avoid_days) if memory is not None else None
-        calendar = call.data.get("calendar") or options.get(CONF_CALENDAR)
+        calendar = call.data.get("calendar")
+        if not calendar and (default := options.get(CONF_CALENDAR)):
+            state = hass.states.get(default)
+            if state is None or state.state == STATE_UNAVAILABLE:
+                # A stale option must not block planning; the dinner calendar still gets the plan.
+                _LOGGER.warning("⚠️ Standardkalendern %s är inte tillgänglig – hoppar över den", default)
+            else:
+                calendar = default
         if calendar and _is_own_calendar(hass, calendar):
             # The dinner calendar already shows everything in the memory.
             calendar = None
@@ -526,6 +538,9 @@ async def async_setup(hass, config):
             days = [start + dt.timedelta(days=offset) for offset in range(len(result["dinners"]))]
             for day, dinner in zip(days, result["dinners"]):
                 dinner["date"] = day.isoformat()
+            if memory is not None:
+                # Before the external calendar, so a failure there still leaves the plan remembered.
+                await memory.async_record(result["dinners"], result.get("list"))
         if calendar and not preview:
             created = 0
             try:
@@ -550,9 +565,6 @@ async def async_setup(hass, config):
                         "list": result["list"] or "",
                     },
                 ) from err
-        if not preview and memory is not None:
-            # Remember what was planned, so the next run can avoid repeats.
-            await memory.async_record(result.get("dinners") or [], result.get("list"))
         return result
 
     # --- Dinner memory: history and preferences ---------------------------------

@@ -15,17 +15,18 @@ from homeassistant.components.calendar import (
     CalendarEntityFeature,
     CalendarEvent,
 )
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 from .const import CONF_LIST_ID, DOMAIN
-from .memory import DinnerMemory, _parse_date
+from .memory import DinnerMemory, parse_date
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
     list_id = entry.options.get(CONF_LIST_ID, entry.data[CONF_LIST_ID])
-    async_add_entities([DinnerCalendar(hass.data[DOMAIN]["memory"], list_id)])
+    async_add_entities([DinnerCalendar(hass.data[DOMAIN]["memory"], entry, list_id)])
 
 
 def _uid(recipe_id: str, date: str) -> str:
@@ -40,7 +41,7 @@ def _split_uid(uid: str) -> tuple[str, str]:
 
 
 def _to_event(entry: dict) -> CalendarEvent | None:
-    day = _parse_date(entry.get("date"))
+    day = parse_date(entry.get("date"))
     if day is None:
         return None
     description = "\n".join(str(p) for p in (entry.get("cooking_time"), entry.get("url")) if p)
@@ -60,10 +61,16 @@ class DinnerCalendar(CalendarEntity):
         CalendarEntityFeature.UPDATE_EVENT | CalendarEntityFeature.DELETE_EVENT
     )
 
-    def __init__(self, memory: DinnerMemory, list_id: str) -> None:
+    def __init__(self, memory: DinnerMemory, entry: ConfigEntry, list_id: str) -> None:
         self._memory = memory
-        self._attr_unique_id = f"ica_dinners_{list_id}"
-        self._attr_device_info = {"identifiers": {(DOMAIN, list_id)}}
+        # The memory is shared by every list, so the id must survive switching lists.
+        self._attr_unique_id = f"ica_dinners_{entry.entry_id}"
+        # Named like the sensors' device: this platform usually registers it first.
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, list_id)},
+            "name": f"ICA – {entry.title}",
+            "manufacturer": "ICA",
+        }
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
