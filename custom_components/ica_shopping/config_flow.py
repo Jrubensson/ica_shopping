@@ -21,6 +21,7 @@ from homeassistant.helpers.selector import (
 
 from .const import (
     CONF_AUTH,
+    CONF_CALENDAR,
     CONF_LIST_ID,
     CONF_NEVER_ADD,
     CONF_REMOVE_STRIKED,
@@ -43,6 +44,7 @@ _LOGGER = logging.getLogger(__name__)
 
 PASSWORD_SELECTOR = TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD))
 TODO_SELECTOR = EntitySelector(EntitySelectorConfig(domain="todo"))
+CALENDAR_SELECTOR = EntitySelector(EntitySelectorConfig(domain="calendar"))
 NEVER_ADD_SELECTOR = TextSelector(TextSelectorConfig(multiple=True))
 
 
@@ -262,6 +264,10 @@ class ICAOptionsFlowHandler(OptionsFlow):
                     CONF_NEVER_ADD,
                     default=entry.options.get(CONF_NEVER_ADD, DEFAULT_NEVER_ADD),
                 ): NEVER_ADD_SELECTOR,
+                vol.Optional(
+                    CONF_CALENDAR,
+                    description={"suggested_value": entry.options.get(CONF_CALENDAR)},
+                ): CALENDAR_SELECTOR,
                 **store_fields,
             }),
         )

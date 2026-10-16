@@ -55,10 +55,12 @@
           "todo_entity_id": "Att göra-lista (entity)",
           "remove_striked": "Rensa avbockade varor efter varje synk",
           "never_add": "Lägg aldrig till från recept",
-          "store_id": "Butik för erbjudanden"
+          "store_id": "Butik för erbjudanden",
+          "calendar_entity_id": "Standardkalender"
         },
         "data_description": {
-          "never_add": "Basvaror som ica_shopping.plan_dinners hoppar över, matchat på ingrediensnamnet."
+          "never_add": "Basvaror som ica_shopping.plan_dinners hoppar över, matchat på ingrediensnamnet.",
+          "calendar_entity_id": "Kalender som ica_shopping.plan_dinners också lägger händelser i när ingen kalender anges. ICA:s middagskalender visar alltid planen, så lämna tomt om du inte vill ha middagarna i en annan kalender också."
         }
       }
     }
@@ -175,11 +177,11 @@
         },
         "calendar": {
           "name": "Kalender",
-          "description": "Valfritt. Lägger in en heldagshändelse per middag på dagarna i följd, med tillagningstid, receptlänk och ingredienser."
+          "description": "Valfritt. Lägger också in en heldagshändelse per middag i den här kalendern, med tillagningstid, receptlänk och ingredienser. Standard är kalendern i inställningarna."
         },
         "start_date": {
           "name": "Startdatum",
-          "description": "Dagen för första middagen i kalendern. Standard är i morgon."
+          "description": "Dagen för första middagen. Standard är i morgon."
         },
         "preview": {
           "name": "Förhandsgranska",
@@ -245,6 +247,11 @@
             "name": "Träffar"
           }
         }
+      }
+    },
+    "calendar": {
+      "dinners": {
+        "name": "Middagar"
       }
     }
   },

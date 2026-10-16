@@ -6,6 +6,7 @@ CONF_LIST_ID = "ica_list_id"
 CONF_TODO_ENTITY = "todo_entity_id"
 CONF_REMOVE_STRIKED = "remove_striked"
 CONF_NEVER_ADD = "never_add"
+CONF_CALENDAR = "calendar_entity_id"
 
 DEFAULT_NEVER_ADD = ["salt", "peppar", "svartpeppar", "vatten", "olja", "olivolja", "smör"]
 CONF_STORE_ID = "store_id"

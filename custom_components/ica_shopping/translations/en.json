@@ -55,10 +55,12 @@
           "todo_entity_id": "To-do list entity",
           "remove_striked": "Clear checked items after every sync",
           "never_add": "Never add from recipes",
-          "store_id": "Store for offers"
+          "store_id": "Store for offers",
+          "calendar_entity_id": "Default calendar"
         },
         "data_description": {
-          "never_add": "Pantry staples that ica_shopping.plan_dinners skips, matched on the ingredient name."
+          "never_add": "Pantry staples that ica_shopping.plan_dinners skips, matched on the ingredient name.",
+          "calendar_entity_id": "Calendar that ica_shopping.plan_dinners also adds events to when no calendar is given. The ICA dinner calendar always shows the plan, so leave this empty unless you want the dinners in another calendar too."
         }
       }
     }
@@ -175,11 +177,11 @@
         },
         "calendar": {
           "name": "Calendar",
-          "description": "Optional. Adds one all-day event per dinner on consecutive days, with the cooking time, recipe link and ingredients."
+          "description": "Optional. Also adds one all-day event per dinner to this calendar, with the cooking time, recipe link and ingredients. Defaults to the calendar set in the options."
         },
         "start_date": {
           "name": "Start date",
-          "description": "Day of the first dinner in the calendar. Defaults to tomorrow."
+          "description": "Day of the first dinner. Defaults to tomorrow."
         },
         "preview": {
           "name": "Preview",
@@ -245,6 +247,11 @@
             "name": "Matches"
           }
         }
+      }
+    },
+    "calendar": {
+      "dinners": {
+        "name": "Dinners"
       }
     }
   },

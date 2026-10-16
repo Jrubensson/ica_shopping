@@ -59,7 +59,7 @@ def _annotations(**kwargs: bool) -> Any:
 PROMPT = """ICA Shopping gives you the household's grocery list, the offers at the favourite ICA store, and a dinner memory.
 - GetOffers: what is on offer this week (name, brand, deal) and the bonus balance. Treat it as a hint, not a shopping constraint - and remember many offers are not food (cleaning, flowers, drinks).
 - GetMemory: the dinners eaten recently and the saved food preferences. Read it before suggesting meals.
-- PlanDinners: returns real ICA recipes with their ingredients and the merged shopping list. Call it with preview=true to get suggestions; commit with preview=false and the recipe ids you agreed on. Recipes eaten within avoid_days are skipped automatically.
+- PlanDinners: returns real ICA recipes with their ingredients and the merged shopping list. Call it with preview=true to get suggestions; commit with preview=false and the recipe ids you agreed on. Committed dinners land on consecutive days from start_date (default tomorrow) in the dinner calendar. Recipes eaten within avoid_days are skipped automatically.
 - SetPreference / RemovePreference: save or drop a preference such as "no fish".
 - ForgetDinner / ClearMemory: correct the dinner memory.
 
@@ -166,6 +166,13 @@ class PlanDinnersTool(_ServiceTool):
                     "Skip recipes eaten within this many days. Defaults to 14 when not given."
                 ),
             ): int,
+            _Optional(
+                "start_date",
+                description=(
+                    "Day of the first dinner (YYYY-MM-DD) when committing; the rest follow on "
+                    "consecutive days. Defaults to tomorrow."
+                ),
+            ): str,
         }
     )
 
