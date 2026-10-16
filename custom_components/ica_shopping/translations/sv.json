@@ -87,6 +87,9 @@
     },
     "not_loaded": {
       "message": "ICA Shopping är inte uppladdat än. Försök igen om en stund."
+    },
+    "forget_needs_target": {
+      "message": "Ange vilken middag som ska glömmas — ett recept-id, en del av titeln, eller ett datum."
     }
   },
   "services": {
@@ -123,6 +126,34 @@
         "text": {
           "name": "Preferens",
           "description": "Texten att ta bort."
+        }
+      }
+    },
+    "forget_dinner": {
+      "name": "Glöm middag",
+      "description": "Ta bort en middag ur minnet.",
+      "fields": {
+        "recipe": {
+          "name": "Recept",
+          "description": "Recept-id, eller en del av titeln."
+        },
+        "date": {
+          "name": "Datum",
+          "description": "Ta bara bort middagar från detta datum (YYYY-MM-DD)."
+        }
+      }
+    },
+    "clear_memory": {
+      "name": "Rensa middagsminnet",
+      "description": "Töm middagsminnet (historik och/eller preferenser).",
+      "fields": {
+        "history": {
+          "name": "Historik",
+          "description": "Töm middagshistoriken."
+        },
+        "preferences": {
+          "name": "Preferenser",
+          "description": "Töm de sparade preferenserna."
         }
       }
     },

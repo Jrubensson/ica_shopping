@@ -565,6 +565,28 @@ async def async_setup(hass, config):
         removed = await memory.async_remove_preference(call.data["text"])
         return {"removed": removed, "preferences": memory.preferences}
 
+    async def handle_forget_dinner(call: ServiceCall) -> ServiceResponse:
+        memory = _memory_or_raise()
+        recipe = call.data.get("recipe")
+        date = call.data.get("date")
+        if not recipe and not date:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="forget_needs_target"
+            )
+        removed = await memory.async_forget_dinner(recipe, str(date) if date else None)
+        return {"removed": removed, "history": memory.as_dict()["history"]}
+
+    async def handle_clear_memory(call: ServiceCall) -> ServiceResponse:
+        memory = _memory_or_raise()
+        removed = await memory.async_clear(
+            history=bool(call.data.get("history", True)),
+            preferences=bool(call.data.get("preferences", True)),
+        )
+        return {
+            "history_removed": removed["history"],
+            "preferences_removed": removed["preferences"],
+        }
+
     hass.services.async_register(
         DOMAIN, "get_memory", handle_get_memory, supports_response=SupportsResponse.OPTIONAL
     )
@@ -580,6 +602,26 @@ async def async_setup(hass, config):
         "remove_preference",
         handle_remove_preference,
         schema=vol.Schema({vol.Required("text"): cv.string}),
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        "forget_dinner",
+        handle_forget_dinner,
+        schema=vol.Schema({
+            vol.Optional("recipe"): cv.string,
+            vol.Optional("date"): cv.string,
+        }),
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        "clear_memory",
+        handle_clear_memory,
+        schema=vol.Schema({
+            vol.Optional("history", default=True): cv.boolean,
+            vol.Optional("preferences", default=True): cv.boolean,
+        }),
         supports_response=SupportsResponse.OPTIONAL,
     )
 
