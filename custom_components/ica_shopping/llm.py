@@ -59,7 +59,7 @@ def _annotations(**kwargs: bool) -> Any:
 PROMPT = """ICA Shopping gives you the household's grocery list, the offers at the favourite ICA store, and a dinner memory.
 - GetOffers: what is on offer this week (name, brand, deal) and the bonus balance. Treat it as a hint, not a shopping constraint - and remember many offers are not food (cleaning, flowers, drinks).
 - GetMemory: the dinners eaten recently and the saved food preferences. Read it before suggesting meals.
-- PlanDinners: returns real ICA recipes with their ingredients and the merged shopping list. Call it with preview=true to get suggestions; commit with preview=false and the recipe ids you agreed on. Committed dinners land on consecutive days from start_date (default tomorrow) in the dinner calendar. Recipes eaten within avoid_days are skipped automatically.
+- PlanDinners: returns real ICA recipes with their ingredients and the merged shopping list. Call it with preview=true to get suggestions; commit with preview=false and the recipe ids you agreed on. Committed dinners land on the next free days from start_date (default tomorrow) in the dinner calendar; days that already have a dinner are skipped, and the result gives each dinner's date. Recipes eaten within avoid_days are skipped automatically.
 - SetPreference / RemovePreference: save or drop a preference such as "no fish".
 - ForgetDinner / ClearMemory: correct the dinner memory.
 
@@ -69,7 +69,7 @@ When asked what to eat:
 3. Treat the offers as a bonus, not a requirement. A dish does not have to use an offer, and it is normal to serve it with whatever it is usually eaten with - kassler with rice or potatoes, pasta with a sauce - even when that side is not on offer. Mention an offer only when a recipe really uses it.
 4. Never pad a dish or a plate with unrelated offers, and never stack several offers onto one meal. Plain, recognisable home cooking beats a clever combination of whatever happens to be cheap.
 5. Never suggest something the memory says was eaten recently, and never add anything to the list until the user agrees.
-6. The memory also holds dinners planned ahead. When committing, set start_date to the day after the last planned dinner unless the user names a day, so no evening gets two dinners.
+6. The memory also holds dinners planned ahead. Each evening gets at most one dinner: when committing, days that are taken are skipped, so tell the user the dates from the result rather than assuming consecutive days.
 
 When the user states a preference, save it with SetPreference."""
 
@@ -170,8 +170,8 @@ class PlanDinnersTool(_ServiceTool):
             _Optional(
                 "start_date",
                 description=(
-                    "Day of the first dinner (YYYY-MM-DD) when committing; the rest follow on "
-                    "consecutive days. Defaults to tomorrow."
+                    "Earliest day of the first dinner (YYYY-MM-DD) when committing; dinners go on "
+                    "the next days without a dinner. Defaults to tomorrow."
                 ),
             ): str,
         }

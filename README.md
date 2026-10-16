@@ -112,7 +112,7 @@ mode: single
 | `source` | `random` | `random` ICA recipes, or `favorites` saved in the ICA app |
 | `list` | the synced list | ICA list name; a name that doesn't exist is created |
 | `calendar` | the **Default calendar** option | Another calendar entity; also adds one all-day event per dinner there |
-| `start_date` | tomorrow | Day of the first dinner; the rest follow on consecutive days |
+| `start_date` | tomorrow | Earliest day for the first dinner; each dinner goes on the next day that doesn't already have one |
 | `preview` | `false` | Return the menu and merged ingredients without changing the list |
 | `recipes` | – | Recipe ids to use, e.g. `"123,456"`. Overrides `count` and `source`, so a previewed menu can be committed exactly |
 | `avoid_days` | `0` | Skip recipes eaten within this many days (uses the dinner memory) |

@@ -172,6 +172,20 @@ class DinnerMemory:
             _LOGGER.debug("🍽️ %d middagar borttagna ur minnet", removed)
         return removed
 
+    def has_dinner_on(self, date: str) -> bool:
+        return any(e.get("date") == date for e in self.history)
+
+    def free_days(self, start: dt.date, count: int) -> list[dt.date]:
+        """The first `count` days from `start` that have no dinner yet."""
+        taken = {e.get("date") for e in self.history}
+        days: list[dt.date] = []
+        day = start
+        while len(days) < count:
+            if day.isoformat() not in taken:
+                days.append(day)
+            day += dt.timedelta(days=1)
+        return days
+
     def find(self, recipe_id: str, date: str) -> dict | None:
         return next(
             (e for e in self.history if str(e.get("id")) == recipe_id and e.get("date") == date),
@@ -189,13 +203,11 @@ class DinnerMemory:
     async def async_update_entry(
         self, recipe_id: str, date: str, *, new_date: str | None = None, title: str | None = None
     ) -> bool:
-        """Move a dinner to another day and/or rename it."""
+        """Move a dinner to another day and/or rename it. Callers check the new day is free."""
         entry = self.find(recipe_id, date)
         if entry is None:
             return False
         if new_date and new_date != date:
-            if (clash := self.find(recipe_id, new_date)) is not None:
-                self.history.remove(clash)
             entry["date"] = new_date
         if title:
             entry["title"] = title

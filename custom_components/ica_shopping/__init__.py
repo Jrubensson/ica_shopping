@@ -537,7 +537,13 @@ async def async_setup(hass, config):
 
         if not preview:
             start = call.data.get("start_date") or dt_util.now().date() + dt.timedelta(days=1)
-            days = [start + dt.timedelta(days=offset) for offset in range(len(result["dinners"]))]
+            count = len(result["dinners"])
+            # Skip evenings that already have a dinner, so each day gets at most one.
+            days = (
+                memory.free_days(start, count)
+                if memory is not None
+                else [start + dt.timedelta(days=offset) for offset in range(count)]
+            )
             for day, dinner in zip(days, result["dinners"]):
                 dinner["date"] = day.isoformat()
             if memory is not None:

@@ -99,6 +99,9 @@
     "dinner_edit_unsupported": {
       "message": "A dinner can only be moved to another day or renamed. Its description, length, repeat and location come from the recipe and can't be changed here."
     },
+    "dinner_day_taken": {
+      "message": "There's already a dinner on {date}. Move or remove that one first."
+    },
     "dinner_not_found": {
       "message": "That dinner isn't in the dinner memory any more ({uid})."
     }
@@ -190,7 +193,7 @@
         },
         "start_date": {
           "name": "Start date",
-          "description": "Day of the first dinner. Defaults to tomorrow."
+          "description": "Earliest day for the first dinner. Days that already have a dinner are skipped. Defaults to tomorrow."
         },
         "preview": {
           "name": "Preview",

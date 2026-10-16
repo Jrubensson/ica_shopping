@@ -99,6 +99,9 @@
     "dinner_edit_unsupported": {
       "message": "En middag kan bara flyttas till en annan dag eller byta namn. Beskrivning, längd, upprepning och plats kommer från receptet och kan inte ändras här."
     },
+    "dinner_day_taken": {
+      "message": "Det finns redan en middag den {date}. Flytta eller ta bort den först."
+    },
     "dinner_not_found": {
       "message": "Middagen finns inte längre i middagsminnet ({uid})."
     }
@@ -190,7 +193,7 @@
         },
         "start_date": {
           "name": "Startdatum",
-          "description": "Dagen för första middagen. Standard är i morgon."
+          "description": "Tidigaste dagen för första middagen. Dagar som redan har en middag hoppas över. Standard är i morgon."
         },
         "preview": {
           "name": "Förhandsgranska",

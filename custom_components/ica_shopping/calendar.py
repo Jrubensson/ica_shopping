@@ -138,6 +138,13 @@ class DinnerCalendar(CalendarEntity):
             raise HomeAssistantError(
                 translation_domain=DOMAIN, translation_key="dinner_edit_unsupported"
             )
+        new_date = start.isoformat()
+        if new_date != date and self._memory.has_dinner_on(new_date):
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="dinner_day_taken",
+                translation_placeholders={"date": new_date},
+            )
         await self._memory.async_update_entry(
-            recipe_id, date, new_date=start.isoformat(), title=event.get(EVENT_SUMMARY)
+            recipe_id, date, new_date=new_date, title=event.get(EVENT_SUMMARY)
         )
