@@ -25,7 +25,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 from .const import CONF_LIST_ID, DOMAIN
-from .memory import DinnerMemory, parse_date
+from .memory import DayTakenError, DinnerMemory, parse_date
 from .recipes import format_description
 from .sensor import device_info
 
@@ -138,13 +138,13 @@ class DinnerCalendar(CalendarEntity):
             raise HomeAssistantError(
                 translation_domain=DOMAIN, translation_key="dinner_edit_unsupported"
             )
-        new_date = start.isoformat()
-        if new_date != date and self._memory.has_dinner_on(new_date):
+        try:
+            await self._memory.async_update_entry(
+                recipe_id, date, new_date=start.isoformat(), title=event.get(EVENT_SUMMARY)
+            )
+        except DayTakenError as err:
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
                 translation_key="dinner_day_taken",
-                translation_placeholders={"date": new_date},
-            )
-        await self._memory.async_update_entry(
-            recipe_id, date, new_date=new_date, title=event.get(EVENT_SUMMARY)
-        )
+                translation_placeholders={"date": str(err)},
+            ) from err

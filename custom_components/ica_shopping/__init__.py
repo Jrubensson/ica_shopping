@@ -538,12 +538,14 @@ async def async_setup(hass, config):
         if not preview:
             start = call.data.get("start_date") or dt_util.now().date() + dt.timedelta(days=1)
             count = len(result["dinners"])
-            # Skip evenings that already have a dinner, so each day gets at most one.
-            days = (
-                memory.free_days(start, count)
-                if memory is not None
-                else [start + dt.timedelta(days=offset) for offset in range(count)]
-            )
+            if memory is not None:
+                # A repeated commit keeps a recipe's planned day instead of planning it twice.
+                planned = [memory.planned_day(str(d.get("id")), start) for d in result["dinners"]]
+                free = iter(memory.free_days(start, planned.count(None)))
+                days = [day or next(free) for day in planned]
+            else:
+                planned = [None] * count
+                days = [start + dt.timedelta(days=offset) for offset in range(count)]
             for day, dinner in zip(days, result["dinners"]):
                 dinner["date"] = day.isoformat()
             if memory is not None:
@@ -551,8 +553,13 @@ async def async_setup(hass, config):
                 await memory.async_record(result["dinners"], result.get("list"))
         if calendar and not preview:
             created = 0
+            new_events = [
+                (day, recipe, dinner)
+                for day, recipe, dinner, was_planned in zip(days, recipes, result["dinners"], planned)
+                if was_planned is None
+            ]
             try:
-                for day, recipe, dinner in zip(days, recipes, result["dinners"]):
+                for day, recipe, dinner in new_events:
                     await hass.services.async_call("calendar", "create_event", {
                         "entity_id": calendar,
                         "summary": dinner["title"] or "Middag",
@@ -568,7 +575,7 @@ async def async_setup(hass, config):
                     translation_placeholders={
                         "error": str(err),
                         "created": str(created),
-                        "total": str(len(result["dinners"])),
+                        "total": str(len(new_events)),
                         "added": str(len(result["added"])),
                         "list": result["list"] or "",
                     },

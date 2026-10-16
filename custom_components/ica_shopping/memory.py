@@ -25,6 +25,10 @@ HISTORY_MAX = 300
 HISTORY_MAX_AGE_DAYS = 120
 
 
+class DayTakenError(Exception):
+    """The day already has a dinner; each day holds at most one."""
+
+
 class DinnerMemory:
     """Dinner history and free-text preferences, persisted between runs."""
 
@@ -82,9 +86,13 @@ class DinnerMemory:
     async def async_record(
         self, dinners: list[dict], list_name: str | None = None
     ) -> int:
-        """Add dinners to the history. Entries may carry their own `date`."""
+        """Add dinners to the history. Entries may carry their own `date`.
+
+        A dinner on a day that already has a different dinner is skipped.
+        """
         default_date = dt_util.now().date().isoformat()
         known = {(str(e.get("id")), e.get("date")) for e in self.history}
+        taken = {e.get("date") for e in self.history}
         added = 0
         for dinner in dinners:
             recipe_id = dinner.get("id")
@@ -93,6 +101,9 @@ class DinnerMemory:
             date = dinner.get("date") or default_date
             key = (str(recipe_id), date)
             if key in known:
+                continue
+            if date in taken:
+                _LOGGER.debug("🍽️ %s har redan en middag – hoppar över %s", date, recipe_id)
                 continue
             self.history.append(
                 {
@@ -106,6 +117,7 @@ class DinnerMemory:
                 }
             )
             known.add(key)
+            taken.add(date)
             added += 1
         if added:
             self._trim()
@@ -172,8 +184,16 @@ class DinnerMemory:
             _LOGGER.debug("🍽️ %d middagar borttagna ur minnet", removed)
         return removed
 
-    def has_dinner_on(self, date: str) -> bool:
-        return any(e.get("date") == date for e in self.history)
+    def planned_day(self, recipe_id: str, start: dt.date) -> dt.date | None:
+        """The first day on or after `start` this recipe is already planned for."""
+        days = [
+            parsed
+            for e in self.history
+            if str(e.get("id")) == recipe_id
+            and (parsed := parse_date(e.get("date"))) is not None
+            and parsed >= start
+        ]
+        return min(days, default=None)
 
     def free_days(self, start: dt.date, count: int) -> list[dt.date]:
         """The first `count` days from `start` that have no dinner yet."""
@@ -203,11 +223,16 @@ class DinnerMemory:
     async def async_update_entry(
         self, recipe_id: str, date: str, *, new_date: str | None = None, title: str | None = None
     ) -> bool:
-        """Move a dinner to another day and/or rename it. Callers check the new day is free."""
+        """Move a dinner to another day and/or rename it.
+
+        Raises DayTakenError when `new_date` already has a dinner.
+        """
         entry = self.find(recipe_id, date)
         if entry is None:
             return False
         if new_date and new_date != date:
+            if any(e.get("date") == new_date for e in self.history):
+                raise DayTakenError(new_date)
             entry["date"] = new_date
         if title:
             entry["title"] = title
