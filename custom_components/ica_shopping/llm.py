@@ -57,13 +57,20 @@ def _annotations(**kwargs: bool) -> Any:
 
 
 PROMPT = """ICA Shopping gives you the household's grocery list, the offers at the favourite ICA store, and a dinner memory.
-- GetOffers: what is on offer this week (name, brand, deal) and the bonus balance. Use it to suggest meals from what is cheap right now.
+- GetOffers: what is on offer this week (name, brand, deal) and the bonus balance. Treat it as a hint, not a shopping constraint - and remember many offers are not food (cleaning, flowers, drinks).
 - GetMemory: the dinners eaten recently and the saved food preferences. Read it before suggesting meals.
-- PlanDinners: suggest a menu from ICA recipes. Call it with preview=true to show and refine a menu without changing anything; commit with preview=false and the recipe ids you agreed on. Recipes eaten within avoid_days are skipped automatically.
+- PlanDinners: returns real ICA recipes with their ingredients and the merged shopping list. Call it with preview=true to get suggestions; commit with preview=false and the recipe ids you agreed on. Recipes eaten within avoid_days are skipped automatically.
 - SetPreference / RemovePreference: save or drop a preference such as "no fish".
 - ForgetDinner / ClearMemory: correct the dinner memory.
 
-When asked what to eat: read GetOffers and GetMemory first, follow the saved preferences, suggest a few dishes that make use of the offers, and never suggest something the memory says was eaten recently. Do not add anything to the list until the user agrees. When the user states a preference, save it with SetPreference."""
+When asked what to eat:
+1. Read GetMemory and GetOffers first, and follow the saved preferences.
+2. Build the menu from the recipes PlanDinners returns. Present those dishes (shortening a title is fine); do not invent dishes of your own or rename them into something else.
+3. Treat the offers as a bonus, not a requirement. A dish does not have to use an offer, and it is normal to serve it with whatever it is usually eaten with - kassler with rice or potatoes, pasta with a sauce - even when that side is not on offer. Mention an offer only when a recipe really uses it.
+4. Never pad a dish or a plate with unrelated offers, and never stack several offers onto one meal. Plain, recognisable home cooking beats a clever combination of whatever happens to be cheap.
+5. Never suggest something the memory says was eaten recently, and never add anything to the list until the user agrees.
+
+When the user states a preference, save it with SetPreference."""
 
 
 async def _call(hass: HomeAssistant, service: str, data: dict[str, Any]) -> dict[str, Any]:
@@ -100,8 +107,8 @@ class GetOffersTool(_ServiceTool):
     title = "Get ICA offers"
     description = (
         "What is on offer this week at the favourite ICA store - name, brand and deal for each "
-        "offer - plus the Stammis bonus balance. Use it before suggesting meals, so the menu can "
-        "build on what is on offer."
+        "offer - plus the Stammis bonus balance. Use it as a hint for the menu; many offers are "
+        "not food, and a dish does not have to use any of them."
     )
     service = "get_offers"
 
@@ -120,11 +127,11 @@ class PlanDinnersTool(_ServiceTool):
     name = "ica_shopping__PlanDinners"
     title = "Plan dinners"
     description = (
-        "Suggest dinners from ICA recipes and merge their ingredients. With preview=true it "
-        "returns the menu and the merged ingredients without changing the shopping list - use "
-        "that to suggest and refine. Once the user agrees, call it again with preview=false and "
-        "recipes set to the ids you agreed on, which adds exactly that menu. Dinners eaten within "
-        "avoid_days are skipped."
+        "Returns real ICA recipes with their ingredients, and merges them into a shopping list. "
+        "With preview=true it returns a menu without changing the list - use that to suggest and "
+        "refine. Once the user agrees, call it again with preview=false and recipes set to the "
+        "ids you agreed on, which adds exactly that menu. Present the recipes it returns as the "
+        "suggestions; do not invent dishes. Dinners eaten within avoid_days are skipped."
     )
     service = "plan_dinners"
     annotations = _annotations(
