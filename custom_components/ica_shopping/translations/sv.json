@@ -84,6 +84,9 @@
     },
     "offers_failed": {
       "message": "Kunde inte hämta erbjudandena: {error}"
+    },
+    "not_loaded": {
+      "message": "ICA Shopping är inte uppladdat än. Försök igen om en stund."
     }
   },
   "services": {
@@ -98,6 +101,30 @@
     "get_offers": {
       "name": "Hämta erbjudanden",
       "description": "Returnerar favoritbutikens aktuella erbjudanden och bonusläget."
+    },
+    "get_memory": {
+      "name": "Hämta middagsminnet",
+      "description": "Returnerar sparade middagar och preferenser."
+    },
+    "set_preference": {
+      "name": "Spara preferens",
+      "description": "Kom ihåg en middagspreferens, t.ex. 'Oskar: ingen fisk'.",
+      "fields": {
+        "text": {
+          "name": "Preferens",
+          "description": "Texten att komma ihåg."
+        }
+      }
+    },
+    "remove_preference": {
+      "name": "Glöm preferens",
+      "description": "Ta bort en sparad preferens (matchas på texten).",
+      "fields": {
+        "text": {
+          "name": "Preferens",
+          "description": "Texten att ta bort."
+        }
+      }
     },
     "plan_dinners": {
       "name": "Planera middagar",
@@ -130,6 +157,10 @@
         "recipes": {
           "name": "Recept-id",
           "description": "Recept-id att använda, t.ex. '123,456'. Ersätter count och source, så att exakt det förhandsgranskade menyn läggs till."
+        },
+        "avoid_days": {
+          "name": "Undvik senaste dagarna",
+          "description": "Hoppa över recept som ätits inom så här många dagar. 0 stänger av."
         }
       }
     }

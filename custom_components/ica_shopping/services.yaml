@@ -55,3 +55,36 @@ plan_dinners:
       example: "123,456"
       selector:
         text:
+    avoid_days:
+      description: "Skip recipes eaten within this many days."
+      example: 14
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 365
+          mode: box
+
+get_memory:
+  description: "Return the saved dinner history and preferences"
+  fields: {}
+
+set_preference:
+  description: "Remember a dinner preference, e.g. 'Oskar: ingen fisk'"
+  fields:
+    text:
+      description: "The preference to remember"
+      example: "Oskar: ingen fisk"
+      required: true
+      selector:
+        text:
+
+remove_preference:
+  description: "Forget a saved preference (matched on the text)"
+  fields:
+    text:
+      description: "The preference to remove"
+      example: "ingen fisk"
+      required: true
+      selector:
+        text:

@@ -34,6 +34,7 @@ from .const import (
     MAX_ICA_ITEMS,
 )
 from .ica_api import ICAApi, IcaAuthError, IcaError, format_offer, list_matches, parse_bonus
+from .memory import DinnerMemory
 from .recipes import (
     SOURCE_FAVORITES,
     SOURCE_RANDOM,
@@ -465,6 +466,9 @@ async def async_setup(hass, config):
         options = data.get("current_options") or {}
         preview = bool(call.data.get("preview", False))
         recipe_ids = _recipe_ids(call.data.get("recipes"))
+        memory = data.get("memory")
+        avoid_days = call.data.get("avoid_days", 0) or 0
+        avoid_ids = memory.recent_ids(avoid_days) if memory is not None else None
         calendar = call.data.get("calendar")
         if calendar and not preview:
             # Checked up front so a bad calendar choice leaves the ICA list untouched.
@@ -488,6 +492,7 @@ async def async_setup(hass, config):
                     never_add=options.get(CONF_NEVER_ADD, DEFAULT_NEVER_ADD),
                     preview=preview,
                     recipe_ids=recipe_ids,
+                    avoid_ids=avoid_ids,
                 )
         except NoRecipesError as err:
             raise HomeAssistantError(
@@ -533,7 +538,50 @@ async def async_setup(hass, config):
                         "list": result["list"] or "",
                     },
                 ) from err
+        if not preview and memory is not None:
+            # Remember what was planned, so the next run can avoid repeats.
+            await memory.async_record(result.get("dinners") or [], result.get("list"))
         return result
+
+    # --- Dinner memory: history and preferences ---------------------------------
+    def _memory_or_raise() -> DinnerMemory:
+        memory = hass.data.get(DOMAIN, {}).get("memory")
+        if memory is None:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="not_loaded"
+            )
+        return memory
+
+    async def handle_get_memory(call: ServiceCall) -> ServiceResponse:
+        return _memory_or_raise().as_dict()
+
+    async def handle_set_preference(call: ServiceCall) -> ServiceResponse:
+        memory = _memory_or_raise()
+        added = await memory.async_add_preference(call.data["text"])
+        return {"added": added, "preferences": memory.preferences}
+
+    async def handle_remove_preference(call: ServiceCall) -> ServiceResponse:
+        memory = _memory_or_raise()
+        removed = await memory.async_remove_preference(call.data["text"])
+        return {"removed": removed, "preferences": memory.preferences}
+
+    hass.services.async_register(
+        DOMAIN, "get_memory", handle_get_memory, supports_response=SupportsResponse.OPTIONAL
+    )
+    hass.services.async_register(
+        DOMAIN,
+        "set_preference",
+        handle_set_preference,
+        schema=vol.Schema({vol.Required("text"): cv.string}),
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        "remove_preference",
+        handle_remove_preference,
+        schema=vol.Schema({vol.Required("text"): cv.string}),
+        supports_response=SupportsResponse.OPTIONAL,
+    )
 
     hass.services.async_register(
         DOMAIN,
@@ -548,6 +596,8 @@ async def async_setup(hass, config):
             vol.Optional("preview", default=False): cv.boolean,
             # Recipe ids to commit exactly what was previewed; "1,2,3" is accepted too.
             vol.Optional("recipes"): vol.Any(cv.string, [vol.Coerce(str)]),
+            # Skip recipes eaten within this many days (0 = don't skip).
+            vol.Optional("avoid_days", default=0): vol.All(vol.Coerce(int), vol.Range(min=0, max=365)),
         }),
         supports_response=SupportsResponse.OPTIONAL,
     )
@@ -607,6 +657,7 @@ async def async_setup_entry(hass, entry):
     hass.data[DOMAIN]["current_list_id"] = list_id
     hass.data[DOMAIN]["current_options"] = dict(entry.options)
     hass.data[DOMAIN]["sync_in_progress"] = False
+    hass.data[DOMAIN]["memory"] = await DinnerMemory(hass).async_load()
 
     todo_entity = entry.options.get("todo_entity_id", entry.data.get("todo_entity_id"))
     if not todo_entity:
@@ -693,6 +744,7 @@ async def async_unload_entry(hass, entry):
         hass.data[DOMAIN].pop("sync_in_progress", None)
         hass.data[DOMAIN].pop("current_options", None)
         hass.data[DOMAIN].pop("sync", None)
+        hass.data[DOMAIN].pop("memory", None)
 
     return unload_ok
 

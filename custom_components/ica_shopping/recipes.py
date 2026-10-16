@@ -101,25 +101,34 @@ def dinner_summary(recipe: dict) -> dict:
 
 
 async def async_fetch_recipes(
-    api: ICAApi, count: int, source: str, recipe_ids: list | None = None
+    api: ICAApi,
+    count: int,
+    source: str,
+    recipe_ids: list | None = None,
+    avoid_ids: Iterable | None = None,
 ) -> list[dict]:
+    avoid = {str(i) for i in (avoid_ids or ())}
     if recipe_ids:
         # Committing a plan the caller already picked: fetch exactly those recipes.
         picked = list(dict.fromkeys(str(r) for r in recipe_ids))
         return [r for r in [await api.async_get_recipe(i) for i in picked] if r]
 
     if source == SOURCE_FAVORITES:
-        ids = list(dict.fromkeys(await api.async_get_favorite_recipe_ids()))
+        ids = [
+            i
+            for i in dict.fromkeys(await api.async_get_favorite_recipe_ids())
+            if str(i) not in avoid
+        ]
         picked = random.sample(ids, min(count, len(ids)))
         return [r for r in [await api.async_get_recipe(i) for i in picked] if r]
 
     recipes: dict = {}
-    # Random picks can repeat, so allow a few extra calls to reach `count` distinct recipes.
-    for _ in range(count * 2):
+    # Random picks can repeat, and recently eaten ones are skipped, so allow extra calls.
+    for _ in range(count * 2 + len(avoid)):
         if len(recipes) >= count:
             break
         recipe = await api.async_get_random_recipe()
-        if recipe and recipe.get("id") not in recipes:
+        if recipe and recipe.get("id") not in recipes and str(recipe.get("id")) not in avoid:
             recipes[recipe.get("id")] = recipe
     return list(recipes.values())
 
@@ -149,13 +158,14 @@ async def async_plan_dinners(
     never_add: Iterable[str],
     preview: bool = False,
     recipe_ids: list | None = None,
+    avoid_ids: Iterable | None = None,
 ) -> tuple[dict | None, list[dict], dict]:
     """Return (target list, recipes, service response).
 
     With preview=True the list is left untouched and the response carries the menu and the
     merged ingredients, so a caller can show a suggestion before committing it.
     """
-    recipes = await async_fetch_recipes(api, count, source, recipe_ids)
+    recipes = await async_fetch_recipes(api, count, source, recipe_ids, avoid_ids)
     if not recipes:
         raise NoRecipesError(f"No {source} recipes returned")
 

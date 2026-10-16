@@ -115,6 +115,7 @@ mode: single
 | `start_date` | tomorrow | Day of the first dinner in the calendar |
 | `preview` | `false` | Return the menu and merged ingredients without changing the list |
 | `recipes` | – | Recipe ids to use, e.g. `"123,456"`. Overrides `count` and `source`, so a previewed menu can be committed exactly |
+| `avoid_days` | `0` | Skip recipes eaten within this many days (uses the dinner memory) |
 
 Ingredients already on the list are skipped, as are pantry staples listed under **Never add from recipes** in the integration's options (default: salt, peppar, svartpeppar, vatten, olja, olivolja, smör).
 
@@ -171,6 +172,30 @@ Set `preview: true` to get a menu and its merged ingredients **without touching 
 ```
 
 An ingredient whose only row on the list is checked off is unchecked instead of added again. `skipped_list_full` lists ingredients left out because the ICA list reached its 250-row limit (checked rows count too); run `ica_shopping.clear_checked` to make room.
+
+## Dinner Memory
+
+The integration remembers what you have eaten and what you prefer, so `plan_dinners` can avoid repeats and an assistant can answer questions about past dinners. It is kept in Home Assistant's `.storage`, is included in backups, and survives restarts.
+
+- **History** — every dinner `plan_dinners` adds is recorded automatically (recipe id, title, date, list), trimmed to the last 300 dinners / 120 days.
+- **Preferences** — free-text rules such as `Oskar: ingen fisk` or `Vardagar: vegetariskt`.
+- **`avoid_days`** — set it on `plan_dinners` to skip recipes eaten recently; `14` is a good default for a weekly plan. It works for both `random` and `favorites` (`favorites` is filtered on the known recipe ids).
+
+| Action | |
+|---|---|
+| `ica_shopping.get_memory` | Returns `{history: […], preferences: […]}` |
+| `ica_shopping.set_preference` | Remember a rule (`text`) |
+| `ica_shopping.remove_preference` | Forget a rule (matched on the text) |
+
+```yaml
+- action: ica_shopping.plan_dinners
+  data:
+    count: 5
+    avoid_days: 14
+  response_variable: plan
+```
+
+Only committed plans are remembered — `preview: true` never touches the memory.
 
 ## Bonus and Offers Sensors
 
