@@ -209,7 +209,7 @@ Editing it edits the memory: move a dinner to another day, rename it, or delete 
 
 If an external calendar fails part-way, the dinners are still remembered and shown here; add the missing events to the other calendar by hand rather than planning them again.
 
-Dinners remembered before version 1.8 were all stored on the day they were planned, so an older weekly plan shows up as several dinners on one day. Move or delete them if they bother you; new plans get one dinner per day.
+Dinners remembered before version 1.8.0 were all stored on the day they were planned, so an older weekly plan shows up as several dinners on one day. Move or delete them if they bother you; new plans get one dinner per day.
 
 ## Assist tools
 
