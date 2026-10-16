@@ -75,9 +75,12 @@ def recipe_url(recipe: dict) -> str | None:
 
 
 def event_description(recipe: dict) -> str:
-    parts = [str(p) for p in (recipe.get("cookingTime"), recipe_url(recipe)) if p]
-    lines = [(ing.get("text") or "").strip() for ing in _ingredients(recipe)]
-    lines = [f"• {line}" for line in lines if line]
+    return format_description(recipe.get("cookingTime"), recipe_url(recipe), recipe_ingredients(recipe))
+
+
+def format_description(cooking_time, url, ingredients) -> str:
+    parts = [str(p) for p in (cooking_time, url) if p]
+    lines = [f"• {line}" for line in ingredients or [] if line]
     return "\n\n".join(p for p in ("\n".join(parts), "\n".join(lines)) if p)
 
 

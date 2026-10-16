@@ -8,6 +8,7 @@ from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import callback
 from homeassistant.helpers.selector import (
     BooleanSelector,
+    EntityFilterSelectorConfig,
     EntitySelector,
     EntitySelectorConfig,
     SelectOptionDict,
@@ -44,7 +45,13 @@ _LOGGER = logging.getLogger(__name__)
 
 PASSWORD_SELECTOR = TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD))
 TODO_SELECTOR = EntitySelector(EntitySelectorConfig(domain="todo"))
-CALENDAR_SELECTOR = EntitySelector(EntitySelectorConfig(domain="calendar"))
+CALENDAR_SELECTOR = EntitySelector(
+    EntitySelectorConfig(
+        filter=EntityFilterSelectorConfig(
+            domain="calendar", supported_features=["calendar.CalendarEntityFeature.CREATE_EVENT"]
+        )
+    )
+)
 NEVER_ADD_SELECTOR = TextSelector(TextSelectorConfig(multiple=True))
 
 

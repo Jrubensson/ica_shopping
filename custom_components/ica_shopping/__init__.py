@@ -126,6 +126,28 @@ def _is_own_calendar(hass, entity_id: str) -> bool:
     return entry is not None and entry.platform == DOMAIN
 
 
+def _pick_calendar(hass, requested: str | None, options: dict) -> str | None:
+    """The external calendar to write the plan to, checked before the ICA list is touched."""
+    calendar = requested or options.get(CONF_CALENDAR)
+    if not calendar or _is_own_calendar(hass, calendar):
+        # The dinner calendar already shows everything in the memory.
+        return None
+    state = hass.states.get(calendar)
+    available = state is not None and state.state != STATE_UNAVAILABLE
+    writable = available and state.attributes.get(ATTR_SUPPORTED_FEATURES, 0) & CalendarEntityFeature.CREATE_EVENT
+    if writable:
+        return calendar
+    if not requested:
+        # A bad Default calendar option must not block planning; the dinner calendar still gets the plan.
+        _LOGGER.warning("⚠️ Standardkalendern %s går inte att skriva till – hoppar över den", calendar)
+        return None
+    raise HomeAssistantError(
+        translation_domain=DOMAIN,
+        translation_key="calendar_not_writable" if available else "calendar_unavailable",
+        translation_placeholders={"entity_id": calendar},
+    )
+
+
 async def _trigger_sensor_update(hass, list_id):
     registry = entity_registry.async_get(hass)
     target_unique_id = f"shoppinglist_{list_id}"
@@ -481,27 +503,7 @@ async def async_setup(hass, config):
         memory = data.get("memory")
         avoid_days = call.data.get("avoid_days", 0) or 0
         avoid_ids = memory.recent_ids(avoid_days) if memory is not None else None
-        calendar = call.data.get("calendar")
-        if not calendar and (default := options.get(CONF_CALENDAR)):
-            state = hass.states.get(default)
-            if state is None or state.state == STATE_UNAVAILABLE:
-                # A stale option must not block planning; the dinner calendar still gets the plan.
-                _LOGGER.warning("⚠️ Standardkalendern %s är inte tillgänglig – hoppar över den", default)
-            else:
-                calendar = default
-        if calendar and _is_own_calendar(hass, calendar):
-            # The dinner calendar already shows everything in the memory.
-            calendar = None
-        if calendar and not preview:
-            # Checked up front so a bad calendar choice leaves the ICA list untouched.
-            state = hass.states.get(calendar)
-            features = state.attributes.get(ATTR_SUPPORTED_FEATURES, 0) if state else 0
-            if not features & CalendarEntityFeature.CREATE_EVENT:
-                raise HomeAssistantError(
-                    translation_domain=DOMAIN,
-                    translation_key="calendar_not_writable",
-                    translation_placeholders={"entity_id": calendar},
-                )
+        calendar = None if preview else _pick_calendar(hass, call.data.get("calendar"), options)
         try:
             # Not held across sync() below, which takes the same lock.
             async with data.setdefault("sync_lock", asyncio.Lock()):

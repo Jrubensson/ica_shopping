@@ -58,11 +58,7 @@ class ShoppingListSensor(SensorEntity):
         self._attr_native_value = None
         self._attr_extra_state_attributes = {}
 
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, self._list_id)},
-            "name": f"ICA – {self._list_name}",
-            "manufacturer": "ICA",
-        }
+        self._attr_device_info = device_info(self._list_id, self._list_name)
         _LOGGER.debug("✅ Uppdatering klar för %s", self._attr_name)
 
     def _update_state(self, data):
@@ -135,11 +131,7 @@ class ICATokenSensor(SensorEntity):
         self._attr_has_entity_name = True
         self._attr_extra_state_attributes = {}
 
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, list_id)},
-            "name": f"ICA – {list_name}",
-            "manufacturer": "ICA",
-        }
+        self._attr_device_info = device_info(list_id, list_name)
 
     async def async_update(self):
         try:
@@ -181,11 +173,7 @@ class ICALastSyncSensor(SensorEntity):
         self._attr_native_value = None
         self._attr_extra_state_attributes = {}
 
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, list_id)},
-            "name": f"ICA – {list_name}",
-            "manufacturer": "ICA",
-        }
+        self._attr_device_info = device_info(list_id, list_name)
 
     def _refresh_from_data(self):
         data = self.hass.data.get(DOMAIN, {})
@@ -237,11 +225,7 @@ class ICASyncStatusSensor(SensorEntity):
         self._attr_has_entity_name = True
         self._attr_native_value = None
 
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, list_id)},
-            "name": f"ICA – {list_name}",
-            "manufacturer": "ICA",
-        }
+        self._attr_device_info = device_info(list_id, list_name)
 
     def _refresh_from_data(self):
         data = self.hass.data.get(DOMAIN, {})
@@ -267,7 +251,7 @@ class ICASyncStatusSensor(SensorEntity):
             self._unsub_dispatcher()
 
 
-def _device_info(list_id, list_name):
+def device_info(list_id, list_name):
     return {
         "identifiers": {(DOMAIN, list_id)},
         "name": f"ICA – {list_name}",
@@ -286,7 +270,7 @@ class ICABonusSensor(CoordinatorEntity, SensorEntity):
     def __init__(self, coordinator, list_id, list_name):
         super().__init__(coordinator)
         self._attr_unique_id = f"ica_bonus_{list_id}"
-        self._attr_device_info = _device_info(list_id, list_name)
+        self._attr_device_info = device_info(list_id, list_name)
 
     @property
     def native_value(self):
@@ -310,7 +294,7 @@ class ICAOnSaleSensor(CoordinatorEntity, SensorEntity):
     def __init__(self, coordinator, list_id, list_name):
         super().__init__(coordinator)
         self._attr_unique_id = f"ica_on_sale_{list_id}"
-        self._attr_device_info = _device_info(list_id, list_name)
+        self._attr_device_info = device_info(list_id, list_name)
 
     @property
     def native_value(self):

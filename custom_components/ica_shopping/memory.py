@@ -102,6 +102,7 @@ class DinnerMemory:
                     "list": list_name,
                     "url": dinner.get("url"),
                     "cooking_time": dinner.get("cooking_time"),
+                    "ingredients": dinner.get("ingredients") or [],
                 }
             )
             known.add(key)
@@ -217,8 +218,10 @@ class DinnerMemory:
         return removed
 
     def as_dict(self) -> dict:
+        # Ingredients are for the calendar; leaving them out keeps GetMemory small for the LLM.
+        history = [{k: v for k, v in e.items() if k != "ingredients"} for e in self.history]
         return {
-            "history": sorted(self.history, key=lambda e: e.get("date") or "", reverse=True),
+            "history": sorted(history, key=lambda e: e.get("date") or "", reverse=True),
             "preferences": list(self.preferences),
         }
 

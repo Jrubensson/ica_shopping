@@ -119,7 +119,7 @@ mode: single
 
 Ingredients already on the list are skipped, as are pantry staples listed under **Never add from recipes** in the integration's options (default: salt, peppar, svartpeppar, vatten, olja, olivolja, smör).
 
-Committed dinners always appear in the integration's own **Dinners** calendar (see [Dinner Calendar](#dinner-calendar)). To have them in another calendar too, set `calendar` or pick a **Default calendar** in the integration's options; the Assist tool uses that option. Each event there has the recipe title as its name and the cooking time, recipe link and ingredients in its description. The calendar must support creating events (Local Calendar, Google Calendar and CalDAV do); otherwise the action fails before anything is added to the ICA list.
+Committed dinners always appear in the integration's own **Dinners** calendar (see [Dinner Calendar](#dinner-calendar)). To have them in another calendar too, set `calendar` or pick a **Default calendar** in the integration's options; the Assist tool uses that option. Each event there has the recipe title as its name and the cooking time, recipe link and ingredients in its description. A `calendar` you pass must be available and support creating events (Local Calendar, Google Calendar and CalDAV do); otherwise the action fails before anything is added to the ICA list. The **Default calendar** option only offers calendars that can create events, and if it is unavailable or no longer exists when you plan, it is skipped with a warning in the log, so planning still works.
 
 This automation plans Monday–Friday every Sunday morning, puts the dinners in a calendar and sends the menu to your phone:
 
@@ -203,9 +203,13 @@ Only committed plans are remembered — `preview: true` never touches the memory
 
 ### Dinner Calendar
 
-The integration adds a calendar entity, **Dinners** (e.g. `calendar.ica_handlingslista_dinners`), that shows the dinner history as all-day events — past dinners and the ones planned ahead. It reads straight from the memory, so it needs no other calendar integration.
+The integration adds a calendar entity, **Dinners** (e.g. `calendar.ica_handlingslista_dinners`), that shows the dinner history as all-day events — past dinners and the ones planned ahead, with the cooking time, recipe link and ingredients in each description. It reads straight from the memory, so it needs no other calendar integration, and like the memory it keeps the last 120 days.
 
-Editing it edits the memory: drag a dinner to another day to move it, rename it, or delete it if you never cooked it. `avoid_days`, `get_memory` and the Assist tools follow along. New events can't be created here; dinners come from `plan_dinners`. Picking this calendar as the `calendar` of `plan_dinners` is harmless — it already shows the plan, so nothing extra is added.
+Editing it edits the memory: move a dinner to another day, rename it, or delete it if you never cooked it. `avoid_days`, `get_memory` and the Assist tools follow along. Other changes — the description, a longer or timed event, a repeat or a location — are refused with an error rather than silently lost. New events can't be created here; dinners come from `plan_dinners`. Picking this calendar as the `calendar` of `plan_dinners` is harmless — it already shows the plan, so nothing extra is added.
+
+If an external calendar fails part-way, the dinners are still remembered and shown here; add the missing events to the other calendar by hand rather than planning them again.
+
+Dinners remembered before version 1.8 were all stored on the day they were planned, so an older weekly plan shows up as several dinners on one day. Move or delete them if they bother you; new plans get one dinner per day.
 
 ## Assist tools
 

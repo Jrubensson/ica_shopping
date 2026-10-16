@@ -9,6 +9,10 @@ import datetime as dt
 from typing import Any
 
 from homeassistant.components.calendar import (
+    EVENT_DESCRIPTION,
+    EVENT_END,
+    EVENT_LOCATION,
+    EVENT_RRULE,
     EVENT_START,
     EVENT_SUMMARY,
     CalendarEntity,
@@ -22,6 +26,8 @@ from homeassistant.util import dt as dt_util
 
 from .const import CONF_LIST_ID, DOMAIN
 from .memory import DinnerMemory, parse_date
+from .recipes import format_description
+from .sensor import device_info
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
@@ -33,10 +39,18 @@ def _uid(recipe_id: str, date: str) -> str:
     return f"{recipe_id}@{date}"
 
 
+def _not_found(uid: str) -> HomeAssistantError:
+    return HomeAssistantError(
+        translation_domain=DOMAIN,
+        translation_key="dinner_not_found",
+        translation_placeholders={"uid": uid},
+    )
+
+
 def _split_uid(uid: str) -> tuple[str, str]:
     recipe_id, sep, date = uid.rpartition("@")
     if not sep:
-        raise HomeAssistantError(f"Unknown dinner {uid}")
+        raise _not_found(uid)
     return recipe_id, date
 
 
@@ -44,7 +58,7 @@ def _to_event(entry: dict) -> CalendarEvent | None:
     day = parse_date(entry.get("date"))
     if day is None:
         return None
-    description = "\n".join(str(p) for p in (entry.get("cooking_time"), entry.get("url")) if p)
+    description = format_description(entry.get("cooking_time"), entry.get("url"), entry.get("ingredients"))
     return CalendarEvent(
         start=day,
         end=day + dt.timedelta(days=1),
@@ -65,12 +79,8 @@ class DinnerCalendar(CalendarEntity):
         self._memory = memory
         # The memory is shared by every list, so the id must survive switching lists.
         self._attr_unique_id = f"ica_dinners_{entry.entry_id}"
-        # Named like the sensors' device: this platform usually registers it first.
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, list_id)},
-            "name": f"ICA – {entry.title}",
-            "manufacturer": "ICA",
-        }
+        # The sensors rename the device to the live list name; this platform usually registers it first.
+        self._attr_device_info = device_info(list_id, entry.title)
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
@@ -101,7 +111,7 @@ class DinnerCalendar(CalendarEntity):
         recurrence_range: str | None = None,
     ) -> None:
         if not await self._memory.async_remove_entry(*_split_uid(uid)):
-            raise HomeAssistantError(f"Unknown dinner {uid}")
+            raise _not_found(uid)
 
     async def async_update_event(
         self,
@@ -110,13 +120,24 @@ class DinnerCalendar(CalendarEntity):
         recurrence_id: str | None = None,
         recurrence_range: str | None = None,
     ) -> None:
-        start = event.get(EVENT_START)
-        if isinstance(start, dt.datetime):
-            start = dt_util.as_local(start).date()
-        changed = await self._memory.async_update_entry(
-            *_split_uid(uid),
-            new_date=start.isoformat() if isinstance(start, dt.date) else None,
-            title=event.get(EVENT_SUMMARY),
+        recipe_id, date = _split_uid(uid)
+        entry = self._memory.find(recipe_id, date)
+        if entry is None:
+            raise _not_found(uid)
+        start, end = event.get(EVENT_START), event.get(EVENT_END)
+        current = _to_event(entry)
+        description = event.get(EVENT_DESCRIPTION)
+        if (
+            isinstance(start, dt.datetime)
+            or (isinstance(end, dt.date) and end - start > dt.timedelta(days=1))
+            or event.get(EVENT_RRULE)
+            or event.get(EVENT_LOCATION)
+            or (description is not None and description.strip() != (current.description or "").strip())
+        ):
+            # Anything else would be accepted and then lost, since events are rebuilt from the memory.
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="dinner_edit_unsupported"
+            )
+        await self._memory.async_update_entry(
+            recipe_id, date, new_date=start.isoformat(), title=event.get(EVENT_SUMMARY)
         )
-        if not changed:
-            raise HomeAssistantError(f"Unknown dinner {uid}")
