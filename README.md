@@ -113,6 +113,9 @@ mode: single
 | `list` | the synced list | ICA list name; a name that doesn't exist is created |
 | `calendar` | – | Calendar entity; adds one all-day event per dinner on consecutive days |
 | `start_date` | tomorrow | Day of the first dinner in the calendar |
+| `preview` | `false` | Return the menu and merged ingredients without changing the list |
+| `recipes` | – | Recipe ids to use, e.g. `"123,456"`. Overrides `count` and `source`, so a previewed menu can be committed exactly |
+| `avoid_days` | `0` | Skip recipes eaten within this many days (uses the dinner memory) |
 
 Ingredients already on the list are skipped, as are pantry staples listed under **Never add from recipes** in the integration's options (default: salt, peppar, svartpeppar, vatten, olja, olivolja, smör).
 
@@ -145,9 +148,54 @@ automation:
             {{ plan.added | count }} items added to {{ plan.list }}.
 ```
 
-The response looks like `{"list": "Handla", "dinners": [{"title": …, "cooking_time": …, "url": …, "date": "2026-10-19"}], "added": ["5 dl mjölk", …], "skipped_list_full": []}`; `date` is only included when `calendar` is set.
+The response looks like `{"list": "Handla", "preview": false, "dinners": [{"id": 719920, "title": …, "cooking_time": …, "url": …, "ingredients": […], "date": "2026-10-19"}], "ingredients": ["5 dl mjölk", …], "added": ["5 dl mjölk", …], "skipped_list_full": []}`; `date` is only included when `calendar` is set, and `added` is empty when `preview` is true.
+
+### Preview, then commit what you picked
+
+Set `preview: true` to get a menu and its merged ingredients **without touching the list**. Each dinner in the response includes its `id` and its own `ingredients`, so you can show the suggestion, swap dishes, and only commit when it looks right. Pass the chosen ids back in `recipes` — `count` and `source` are then ignored, and exactly that menu is added:
+
+```yaml
+- alias: "Suggest a menu"
+  action: ica_shopping.plan_dinners
+  data:
+    preview: true
+    count: 8
+    source: random
+  response_variable: preview
+
+# … pick the dinners you like from preview.dinners[].id …
+
+- alias: "Add the two we agreed on"
+  action: ica_shopping.plan_dinners
+  data:
+    recipes: "719920,719907"
+```
 
 An ingredient whose only row on the list is checked off is unchecked instead of added again. `skipped_list_full` lists ingredients left out because the ICA list reached its 250-row limit (checked rows count too); run `ica_shopping.clear_checked` to make room.
+
+## Dinner Memory
+
+The integration remembers what you have eaten and what you prefer, so `plan_dinners` can avoid repeats and an assistant can answer questions about past dinners. It is kept in Home Assistant's `.storage`, is included in backups, and survives restarts.
+
+- **History** — every dinner `plan_dinners` adds is recorded automatically (recipe id, title, date, list), trimmed to the last 300 dinners / 120 days.
+- **Preferences** — free-text rules such as `Oskar: ingen fisk` or `Vardagar: vegetariskt`.
+- **`avoid_days`** — set it on `plan_dinners` to skip recipes eaten recently; `14` is a good default for a weekly plan. It works for both `random` and `favorites` (`favorites` is filtered on the known recipe ids).
+
+| Action | |
+|---|---|
+| `ica_shopping.get_memory` | Returns `{history: […], preferences: […]}` |
+| `ica_shopping.set_preference` | Remember a rule (`text`) |
+| `ica_shopping.remove_preference` | Forget a rule (matched on the text) |
+
+```yaml
+- action: ica_shopping.plan_dinners
+  data:
+    count: 5
+    avoid_days: 14
+  response_variable: plan
+```
+
+Only committed plans are remembered — `preview: true` never touches the memory.
 
 ## Bonus and Offers Sensors
 
@@ -161,6 +209,28 @@ The store is taken from your favourite stores in the ICA app (the first one by d
 Items are matched on words of three or more letters, so "mjölk" matches any offer whose name contains "mjölk". Expect the odd false positive.
 
 If ICA's bonus or offer services fail, only these two sensors become unavailable; list sync is unaffected.
+
+### Getting the offers with `ica_shopping.get_offers`
+
+The On Sale sensor only tells you *how many* offers exist. To get the offers themselves — for an automation or a voice assistant — call `ica_shopping.get_offers`. It returns the favourite store's current offers and the bonus balance:
+
+```yaml
+- action: ica_shopping.get_offers
+  response_variable: offers
+```
+
+```json
+{
+  "store": "ICA Supermarket Edsbyn",
+  "offer_count": 57,
+  "offers": [
+    { "name": "Kassler", "brand": "ICA", "deal": "69 /kg", "valid_to": "2026-10-18T23:59:59" }
+  ],
+  "bonus": { "total_voucher_value": 50.0, "next_voucher_value": 75.0, "remaining_days": 17 }
+}
+```
+
+Offers are the store's whole assortment, not only food. The result is cached for 15 minutes, so calling it repeatedly — for example while a voice assistant refines a menu — does not hit ICA every time. The first call fetches live; the On Sale sensor keeps its own 6-hour cache.
 
 ```yaml
 automation:

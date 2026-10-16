@@ -14,6 +14,10 @@ refresh:
 clear_checked:
   description: "Sync, then delete checked-off rows from the ICA list and completed items from the to-do list"
 
+get_offers:
+  description: "Return the favourite store's current offers and the bonus balance"
+  fields: {}
+
 plan_dinners:
   fields:
     count:
@@ -42,3 +46,45 @@ plan_dinners:
     start_date:
       selector:
         date:
+    preview:
+      default: false
+      selector:
+        boolean:
+    recipes:
+      description: "Recipe ids to use, e.g. '123,456'. Overrides count and source."
+      example: "123,456"
+      selector:
+        text:
+    avoid_days:
+      description: "Skip recipes eaten within this many days."
+      example: 14
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 365
+          mode: box
+
+get_memory:
+  description: "Return the saved dinner history and preferences"
+  fields: {}
+
+set_preference:
+  description: "Remember a dinner preference, e.g. 'Oskar: ingen fisk'"
+  fields:
+    text:
+      description: "The preference to remember"
+      example: "Oskar: ingen fisk"
+      required: true
+      selector:
+        text:
+
+remove_preference:
+  description: "Forget a saved preference (matched on the text)"
+  fields:
+    text:
+      description: "The preference to remove"
+      example: "ingen fisk"
+      required: true
+      selector:
+        text:

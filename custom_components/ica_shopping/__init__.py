@@ -1,6 +1,7 @@
 import asyncio
 import datetime as dt
 import logging
+import time
 from typing import Iterable
 
 import voluptuous as vol
@@ -25,13 +26,15 @@ from .const import (
     CONF_LIST_ID,
     CONF_NEVER_ADD,
     CONF_REMOVE_STRIKED,
+    CONF_STORE_ID,
     CONF_TODO_ENTITY,
     DOMAIN,
     DATA_ICA,
     DEFAULT_NEVER_ADD,
     MAX_ICA_ITEMS,
 )
-from .ica_api import ICAApi, IcaAuthError, IcaError, list_matches
+from .ica_api import ICAApi, IcaAuthError, IcaError, format_offer, list_matches, parse_bonus
+from .memory import DinnerMemory
 from .recipes import (
     SOURCE_FAVORITES,
     SOURCE_RANDOM,
@@ -44,6 +47,10 @@ from .recipes import (
 _LOGGER = logging.getLogger(__name__)
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+# get_offers is called on each turn of a conversation; the store's offers only change daily,
+# so a short cache keeps a back-and-forth from hammering ICA's API. The sensor polls every 6 h.
+OFFERS_CACHE_SECONDS = 15 * 60
 
 def _record_sync_result(hass, success: bool):
     """Store the outcome of a sync run so the Last Sync sensor can report it.
@@ -381,6 +388,14 @@ async def _perform_sync_locked(hass, api: ICAApi, entry, clear_checked: bool) ->
 
 async def async_setup(hass, config):
     # Registered here, not per entry, so automations keep a valid action while login is broken.
+    def _recipe_ids(value) -> list[str] | None:
+        """Normalise a list of recipe ids, or a comma-separated string, to a list."""
+        if not value:
+            return None
+        parts = value.replace(" ", "").split(",") if isinstance(value, str) else value
+        ids = [str(p).strip() for p in parts if str(p).strip()]
+        return ids or None
+
     def _sync_or_raise():
         sync = hass.data.get(DOMAIN, {}).get("sync")
         if sync is None:
@@ -402,13 +417,60 @@ async def async_setup(hass, config):
     hass.services.async_register(DOMAIN, "refresh", handle_refresh)
     hass.services.async_register(DOMAIN, "clear_checked", handle_clear_checked)
 
+    async def handle_get_offers(call: ServiceCall) -> ServiceResponse:
+        """The favourite store's current offers and the bonus balance."""
+        data = hass.data.get(DOMAIN, {})
+        api = data.get(DATA_ICA)
+        if api is None:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="not_logged_in"
+            )
+        cached = data.get("offers_cache")
+        if cached and time.monotonic() - cached[0] < OFFERS_CACHE_SECONDS:
+            return cached[1]
+        options = data.get("current_options") or {}
+        try:
+            stores = await api.async_get_favorite_stores()
+            if not stores:
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN, translation_key="no_favorite_store"
+                )
+            store = next(
+                (s for s in stores if s["id"] == options.get(CONF_STORE_ID)), stores[0]
+            )
+            offers = await api.async_get_store_offers(store["id"])
+            bonus = parse_bonus(await api.async_get_bonus())
+        except IcaError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="offers_failed",
+                translation_placeholders={"error": str(err)},
+            ) from err
+        result = {
+            "store": store.get("name"),
+            "offer_count": len(offers),
+            "offers": [format_offer(o) for o in offers],
+            "bonus": bonus,
+        }
+        data["offers_cache"] = (time.monotonic(), result)
+        return result
+
+    hass.services.async_register(
+        DOMAIN, "get_offers", handle_get_offers, supports_response=SupportsResponse.OPTIONAL
+    )
+
     async def handle_plan_dinners(call: ServiceCall) -> ServiceResponse:
         sync = _sync_or_raise()
         data = hass.data[DOMAIN]
         default_list_id = data["current_list_id"]
         options = data.get("current_options") or {}
+        preview = bool(call.data.get("preview", False))
+        recipe_ids = _recipe_ids(call.data.get("recipes"))
+        memory = data.get("memory")
+        avoid_days = call.data.get("avoid_days", 0) or 0
+        avoid_ids = memory.recent_ids(avoid_days) if memory is not None else None
         calendar = call.data.get("calendar")
-        if calendar:
+        if calendar and not preview:
             # Checked up front so a bad calendar choice leaves the ICA list untouched.
             state = hass.states.get(calendar)
             features = state.attributes.get(ATTR_SUPPORTED_FEATURES, 0) if state else 0
@@ -428,6 +490,9 @@ async def async_setup(hass, config):
                     list_ref=call.data.get("list"),
                     default_list_id=default_list_id,
                     never_add=options.get(CONF_NEVER_ADD, DEFAULT_NEVER_ADD),
+                    preview=preview,
+                    recipe_ids=recipe_ids,
+                    avoid_ids=avoid_ids,
                 )
         except NoRecipesError as err:
             raise HomeAssistantError(
@@ -442,11 +507,11 @@ async def async_setup(hass, config):
                 translation_placeholders={"error": str(err)},
             ) from err
 
-        if result["added"] and list_matches(target, default_list_id):
+        if not preview and result["added"] and list_matches(target, default_list_id):
             # Push the new rows to the to-do entity now instead of on the next refresh.
             await sync()
 
-        if calendar:
+        if calendar and not preview:
             start = call.data.get("start_date") or dt_util.now().date() + dt.timedelta(days=1)
             created = 0
             try:
@@ -473,7 +538,50 @@ async def async_setup(hass, config):
                         "list": result["list"] or "",
                     },
                 ) from err
+        if not preview and memory is not None:
+            # Remember what was planned, so the next run can avoid repeats.
+            await memory.async_record(result.get("dinners") or [], result.get("list"))
         return result
+
+    # --- Dinner memory: history and preferences ---------------------------------
+    def _memory_or_raise() -> DinnerMemory:
+        memory = hass.data.get(DOMAIN, {}).get("memory")
+        if memory is None:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="not_loaded"
+            )
+        return memory
+
+    async def handle_get_memory(call: ServiceCall) -> ServiceResponse:
+        return _memory_or_raise().as_dict()
+
+    async def handle_set_preference(call: ServiceCall) -> ServiceResponse:
+        memory = _memory_or_raise()
+        added = await memory.async_add_preference(call.data["text"])
+        return {"added": added, "preferences": memory.preferences}
+
+    async def handle_remove_preference(call: ServiceCall) -> ServiceResponse:
+        memory = _memory_or_raise()
+        removed = await memory.async_remove_preference(call.data["text"])
+        return {"removed": removed, "preferences": memory.preferences}
+
+    hass.services.async_register(
+        DOMAIN, "get_memory", handle_get_memory, supports_response=SupportsResponse.OPTIONAL
+    )
+    hass.services.async_register(
+        DOMAIN,
+        "set_preference",
+        handle_set_preference,
+        schema=vol.Schema({vol.Required("text"): cv.string}),
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        "remove_preference",
+        handle_remove_preference,
+        schema=vol.Schema({vol.Required("text"): cv.string}),
+        supports_response=SupportsResponse.OPTIONAL,
+    )
 
     hass.services.async_register(
         DOMAIN,
@@ -485,6 +593,11 @@ async def async_setup(hass, config):
             vol.Optional("list"): cv.string,
             vol.Optional("calendar"): cv.entity_domain("calendar"),
             vol.Optional("start_date"): cv.date,
+            vol.Optional("preview", default=False): cv.boolean,
+            # Recipe ids to commit exactly what was previewed; "1,2,3" is accepted too.
+            vol.Optional("recipes"): vol.Any(cv.string, [vol.Coerce(str)]),
+            # Skip recipes eaten within this many days (0 = don't skip).
+            vol.Optional("avoid_days", default=0): vol.All(vol.Coerce(int), vol.Range(min=0, max=365)),
         }),
         supports_response=SupportsResponse.OPTIONAL,
     )
@@ -544,6 +657,7 @@ async def async_setup_entry(hass, entry):
     hass.data[DOMAIN]["current_list_id"] = list_id
     hass.data[DOMAIN]["current_options"] = dict(entry.options)
     hass.data[DOMAIN]["sync_in_progress"] = False
+    hass.data[DOMAIN]["memory"] = await DinnerMemory(hass).async_load()
 
     todo_entity = entry.options.get("todo_entity_id", entry.data.get("todo_entity_id"))
     if not todo_entity:
@@ -630,6 +744,7 @@ async def async_unload_entry(hass, entry):
         hass.data[DOMAIN].pop("sync_in_progress", None)
         hass.data[DOMAIN].pop("current_options", None)
         hass.data[DOMAIN].pop("sync", None)
+        hass.data[DOMAIN].pop("memory", None)
 
     return unload_ok
 
