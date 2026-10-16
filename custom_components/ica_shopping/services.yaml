@@ -88,3 +88,31 @@ remove_preference:
       required: true
       selector:
         text:
+
+forget_dinner:
+  description: "Remove a dinner from the memory history"
+  fields:
+    recipe:
+      description: "Recipe id, or part of the title"
+      example: "719907"
+      selector:
+        text:
+    date:
+      description: "Only remove meals eaten on this date (YYYY-MM-DD)"
+      example: "2026-10-16"
+      selector:
+        text:
+
+clear_memory:
+  description: "Empty the dinner memory (history and/or preferences)"
+  fields:
+    history:
+      description: "Clear the dinner history"
+      default: true
+      selector:
+        boolean:
+    preferences:
+      description: "Clear the saved preferences"
+      default: true
+      selector:
+        boolean:

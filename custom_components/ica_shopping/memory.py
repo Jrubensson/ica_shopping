@@ -129,6 +129,51 @@ class DinnerMemory:
             await self._async_save()
         return removed
 
+    async def async_forget_dinner(
+        self, recipe: str | None = None, date: str | None = None
+    ) -> int:
+        """Remove history entries matching a recipe id/title and/or a date.
+
+        `recipe` matches the recipe id exactly or is a substring of the title; `date` is an
+        ISO date. With only one of them set, the other is ignored.
+        """
+        wanted_recipe = (recipe or "").strip().lower()
+        wanted_date = (date or "").strip()
+        if not wanted_recipe and not wanted_date:
+            return 0
+
+        def matches(entry: dict) -> bool:
+            if wanted_date and (entry.get("date") or "") != wanted_date:
+                return False
+            if not wanted_recipe:
+                return True
+            recipe_id = str(entry.get("id", "")).lower()
+            title = (entry.get("title") or "").lower()
+            return wanted_recipe == recipe_id or wanted_recipe in title
+
+        before = len(self.history)
+        self.history = [e for e in self.history if not matches(e)]
+        removed = before - len(self.history)
+        if removed:
+            await self._async_save()
+            _LOGGER.debug("🍽️ %d middagar borttagna ur minnet", removed)
+        return removed
+
+    async def async_clear(
+        self, history: bool = True, preferences: bool = True
+    ) -> dict:
+        """Empty the history and/or the preferences; returns what was removed."""
+        removed = {"history": 0, "preferences": 0}
+        if history:
+            removed["history"] = len(self.history)
+            self.history = []
+        if preferences:
+            removed["preferences"] = len(self.preferences)
+            self.preferences = []
+        if history or preferences:
+            await self._async_save()
+        return removed
+
     def as_dict(self) -> dict:
         return {
             "history": sorted(self.history, key=lambda e: e.get("date") or "", reverse=True),

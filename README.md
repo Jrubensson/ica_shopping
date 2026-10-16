@@ -186,6 +186,10 @@ The integration remembers what you have eaten and what you prefer, so `plan_dinn
 | `ica_shopping.get_memory` | Returns `{history: […], preferences: […]}` |
 | `ica_shopping.set_preference` | Remember a rule (`text`) |
 | `ica_shopping.remove_preference` | Forget a rule (matched on the text) |
+| `ica_shopping.forget_dinner` | Remove a dinner by recipe id/title (`recipe`) and/or `date` |
+| `ica_shopping.clear_memory` | Empty the history and/or preferences (`history`, `preferences` booleans) |
+
+Use `forget_dinner` to correct a wrong entry (say you cooked something else) and `clear_memory` to start over. `forget_dinner` matches the recipe id exactly or as part of the title, and can be narrowed to one date.
 
 ```yaml
 - action: ica_shopping.plan_dinners

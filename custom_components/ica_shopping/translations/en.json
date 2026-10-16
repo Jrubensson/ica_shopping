@@ -87,6 +87,9 @@
     },
     "not_loaded": {
       "message": "ICA Shopping is not loaded yet. Try again in a moment."
+    },
+    "forget_needs_target": {
+      "message": "Say which dinner to forget — a recipe id, part of the title, or a date."
     }
   },
   "services": {
@@ -123,6 +126,34 @@
         "text": {
           "name": "Preference",
           "description": "The text to remove."
+        }
+      }
+    },
+    "forget_dinner": {
+      "name": "Forget a dinner",
+      "description": "Remove a dinner from the memory.",
+      "fields": {
+        "recipe": {
+          "name": "Recipe",
+          "description": "Recipe id, or part of the title."
+        },
+        "date": {
+          "name": "Date",
+          "description": "Only remove meals eaten on this date (YYYY-MM-DD)."
+        }
+      }
+    },
+    "clear_memory": {
+      "name": "Clear the dinner memory",
+      "description": "Empty the dinner memory (history and/or preferences).",
+      "fields": {
+        "history": {
+          "name": "History",
+          "description": "Clear the dinner history."
+        },
+        "preferences": {
+          "name": "Preferences",
+          "description": "Clear the saved preferences."
         }
       }
     },
