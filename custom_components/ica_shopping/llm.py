@@ -60,6 +60,8 @@ PROMPT = """ICA Shopping gives you the household's grocery list, the offers at t
 - GetOffers: what is on offer this week (name, brand, deal) and the bonus balance. Treat it as a hint, not a shopping constraint - and remember many offers are not food (cleaning, flowers, drinks).
 - GetMemory: the dinners eaten recently and the saved food preferences. Read it before suggesting meals.
 - PlanDinners: returns real ICA recipes with their ingredients and the merged shopping list. Call it with preview=true to get suggestions; commit with preview=false and the recipe ids you agreed on. Committed dinners land on the next free days from start_date (default tomorrow) in the dinner calendar; days that already have a dinner are skipped, and the result gives each dinner's date. Recipes eaten within avoid_days are skipped automatically. Set add_to_list=false when committing if the user only wants the dinners planned, not added to the shopping list; they still go in the memory and calendar. A preview, or a commit with add_to_list=false, also returns ingredient_groups: one entry per ingredient with the total amount (text), the original lines and the dinners that use it.
+- SearchRecipes: search ICA's recipes by name or ingredient. Use it when the user asks for a specific dish; plan a result by passing its id in PlanDinners' recipes.
+- AddDinner: save a dinner that is not an ICA recipe (leftovers, takeaway, a family recipe) on a given date. Days that already have a dinner are refused.
 - SetPreference / RemovePreference: save or drop a preference such as "no fish".
 - ForgetDinner / ClearMemory: correct the dinner memory.
 
@@ -191,6 +193,45 @@ class PlanDinnersTool(_ServiceTool):
         return data
 
 
+class SearchRecipesTool(_ServiceTool):
+    name = "ica_shopping__SearchRecipes"
+    title = "Search ICA recipes"
+    description = (
+        "Search ICA's recipes by name or ingredient, for example 'lasagne' or 'kyckling curry'. "
+        "Returns each recipe's id, title, cooking time and link. To plan one, pass its id to "
+        "PlanDinners as recipes."
+    )
+    service = "search_recipes"
+    parameters = _Schema(
+        {
+            _Required("query", description="What to search for."): str,
+            _Optional("limit", description="How many recipes to return (1-30, default 10)."): int,
+        }
+    )
+
+
+class AddDinnerTool(_ServiceTool):
+    name = "ica_shopping__AddDinner"
+    title = "Add a dinner of your own"
+    description = (
+        "Save a dinner that is not an ICA recipe - leftovers, takeaway or a family recipe - on a "
+        "given date. It goes in the dinner memory and calendar. A day that already has a dinner "
+        "is refused. Only use it once the user has said what and when."
+    )
+    service = "add_dinner"
+    annotations = _annotations(
+        read_only=False, destructive=False, idempotent=False, open_world=False
+    )
+    parameters = _Schema(
+        {
+            _Required("title", description="What the household is having."): str,
+            _Required("date", description="The day of the dinner (YYYY-MM-DD)."): str,
+            _Optional("note", description="Optional note for the calendar event."): str,
+            _Optional("url", description="Optional link to a recipe."): str,
+        }
+    )
+
+
 class SetPreferenceTool(_ServiceTool):
     name = "ica_shopping__SetPreference"
     title = "Remember a food preference"
@@ -270,6 +311,8 @@ TOOLS: list[Tool] = [
     GetOffersTool(),
     GetMemoryTool(),
     PlanDinnersTool(),
+    SearchRecipesTool(),
+    AddDinnerTool(),
     SetPreferenceTool(),
     RemovePreferenceTool(),
     ForgetDinnerTool(),

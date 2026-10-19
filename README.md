@@ -189,6 +189,7 @@ The integration remembers what you have eaten and what you prefer, so `plan_dinn
 | `ica_shopping.get_memory` | Returns `{history: […], preferences: […]}` |
 | `ica_shopping.set_preference` | Remember a rule (`text`) |
 | `ica_shopping.remove_preference` | Forget a rule (matched on the text) |
+| `ica_shopping.add_dinner` | Save a dinner of your own (`title`, `date`, optional `note` and `url`) |
 | `ica_shopping.forget_dinner` | Remove a dinner by recipe id/title (`recipe`) and/or `date` |
 | `ica_shopping.clear_memory` | Empty the history and/or preferences (`history`, `preferences` booleans) |
 
@@ -204,11 +205,43 @@ Use `forget_dinner` to correct a wrong entry (say you cooked something else) and
 
 Only committed plans are remembered — `preview: true` never touches the memory.
 
+### Your own dinners
+
+`ica_shopping.add_dinner` saves a dinner that isn't an ICA recipe — leftovers, takeaway, mormors kålpudding. It goes on the given `date` in the Dinners calendar and the **Default calendar**, with the `note` and `url` in the event description, and responds with `{"id": "custom-1a2b3c4d", "title": …, "date": …}`. A day that already has a dinner is refused, as with `plan_dinners`.
+
+Your own dinners have ids starting with `custom-` and are marked `"custom": true` in `get_memory`. They don't count for `avoid_days`, are skipped if passed to `plan_dinners`' `recipes`, and can be moved, renamed or deleted in the Dinners calendar or with `forget_dinner` like any other dinner.
+
+```yaml
+- action: ica_shopping.add_dinner
+  data:
+    title: Fredagstacos
+    date: "2026-10-23"
+    note: Glöm inte guacamolen
+```
+
+### Searching recipes
+
+`ica_shopping.search_recipes` searches ica.se's recipes (`query`, optional `limit` 1–30, default 10) and responds with `{"recipes": [{"id", "title", "cooking_time", "url", "image", "ingredient_count"}]}`. Pass a result's `id` to `plan_dinners` as `recipes` to plan it — with `preview`, `add_to_list` and `start_date` as usual:
+
+```yaml
+- action: ica_shopping.search_recipes
+  data:
+    query: lasagne
+    limit: 5
+  response_variable: found
+- action: ica_shopping.plan_dinners
+  data:
+    recipes: "{{ found.recipes[0].id }}"
+    start_date: "2026-10-23"
+```
+
+The search uses the same anonymous access as ica.se, so it doesn't count against your ICA login.
+
 ### Dinner Calendar
 
 The integration adds a calendar entity, **Dinners** (e.g. `calendar.ica_handlingslista_dinners`), that shows the dinner history as all-day events — past dinners and the ones planned ahead, with the cooking time, recipe link and ingredients in each description. It reads straight from the memory, so it needs no other calendar integration, and like the memory it keeps the last 120 days.
 
-Editing it edits the memory: move a dinner to another day, rename it, or delete it if you never cooked it. `avoid_days`, `get_memory` and the Assist tools follow along. Other changes — the description, a longer or timed event, a repeat or a location — are refused with an error rather than silently lost. New events can't be created here; dinners come from `plan_dinners`. Picking this calendar as the `calendar` of `plan_dinners` is harmless — it already shows the plan, so nothing extra is added.
+Editing it edits the memory: move a dinner to another day, rename it, or delete it if you never cooked it. `avoid_days`, `get_memory` and the Assist tools follow along. Other changes — the description, a longer or timed event, a repeat or a location — are refused with an error rather than silently lost. New events can't be created here; dinners come from `plan_dinners` and `add_dinner`. Picking this calendar as the `calendar` of `plan_dinners` is harmless — it already shows the plan, so nothing extra is added.
 
 If an external calendar fails part-way, the dinners are still remembered and shown here; add the missing events to the other calendar by hand rather than planning them again.
 
@@ -223,6 +256,8 @@ On Home Assistant 2026.8 and newer the integration contributes its own tools to 
 | `ica_shopping__GetOffers` | This week's offers at the favourite store, and the bonus balance |
 | `ica_shopping__GetMemory` | Recently eaten dinners and the saved preferences |
 | `ica_shopping__PlanDinners` | Suggest a menu from ICA recipes. `preview: true` returns it without changing the list; commit with `recipes` set to the ids you agreed on, optionally from a `start_date`. Committed dinners go in the Dinners calendar and the **Default calendar** |
+| `ica_shopping__SearchRecipes` | Search ICA's recipes, e.g. when the user asks for a specific dish |
+| `ica_shopping__AddDinner` | Save a dinner of the user's own, without an ICA recipe |
 | `ica_shopping__SetPreference` / `RemovePreference` | Remember or drop a food preference |
 | `ica_shopping__ForgetDinner` / `ClearMemory` | Correct the dinner memory |
 

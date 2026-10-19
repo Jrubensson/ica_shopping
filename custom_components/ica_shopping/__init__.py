@@ -40,14 +40,16 @@ from .const import (
     MAX_ICA_ITEMS,
 )
 from .ica_api import ICAApi, IcaAuthError, IcaError, format_offer, list_matches, parse_bonus
-from .memory import DinnerMemory
+from .memory import DayTakenError, DinnerMemory
 from .recipes import (
     SOURCE_FAVORITES,
     SOURCE_RANDOM,
     NoRecipesError,
     async_plan_dinners,
     event_description,
+    format_description,
     norm as _norm,
+    search_summary,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -493,6 +495,33 @@ async def async_setup(hass, config):
         DOMAIN, "get_offers", handle_get_offers, supports_response=SupportsResponse.OPTIONAL
     )
 
+    async def handle_search_recipes(call: ServiceCall) -> ServiceResponse:
+        api = hass.data.get(DOMAIN, {}).get(DATA_ICA)
+        if api is None:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="not_logged_in"
+            )
+        try:
+            results = await api.async_search_recipes(call.data["query"], call.data["limit"])
+        except IcaError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="search_recipes_failed",
+                translation_placeholders={"error": str(err)},
+            ) from err
+        return {"recipes": [search_summary(r) for r in results]}
+
+    hass.services.async_register(
+        DOMAIN,
+        "search_recipes",
+        handle_search_recipes,
+        schema=vol.Schema({
+            vol.Required("query"): cv.string,
+            vol.Optional("limit", default=10): vol.All(vol.Coerce(int), vol.Range(min=1, max=30)),
+        }),
+        supports_response=SupportsResponse.ONLY,
+    )
+
     async def handle_plan_dinners(call: ServiceCall) -> ServiceResponse:
         sync = _sync_or_raise()
         data = hass.data[DOMAIN]
@@ -616,6 +645,39 @@ async def async_setup(hass, config):
         removed = await memory.async_forget_dinner(recipe, str(date) if date else None)
         return {"removed": removed, "history": memory.as_dict()["history"]}
 
+    async def handle_add_dinner(call: ServiceCall) -> ServiceResponse:
+        memory = _memory_or_raise()
+        options = hass.data[DOMAIN].get("current_options") or {}
+        title, day = call.data["title"], call.data["date"]
+        note, url = call.data.get("note"), call.data.get("url")
+        calendar = _pick_calendar(hass, None, options)
+        try:
+            entry = await memory.async_add_custom(title, day.isoformat(), note=note, url=url)
+        except DayTakenError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="dinner_day_taken",
+                translation_placeholders={"date": str(err)},
+            ) from err
+        if calendar:
+            try:
+                await hass.services.async_call("calendar", "create_event", {
+                    "entity_id": calendar,
+                    "summary": title,
+                    "description": format_description(None, url, None, note=note),
+                    "start_date": day,
+                    "end_date": day + dt.timedelta(days=1),
+                }, blocking=True)
+            except Exception as err:
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN,
+                    translation_key="add_dinner_calendar_failed",
+                    translation_placeholders={
+                        "error": str(err), "title": title, "entity_id": calendar,
+                    },
+                ) from err
+        return {"id": entry["id"], "title": entry["title"], "date": entry["date"]}
+
     async def handle_clear_memory(call: ServiceCall) -> ServiceResponse:
         memory = _memory_or_raise()
         removed = await memory.async_clear(
@@ -651,6 +713,18 @@ async def async_setup(hass, config):
         schema=vol.Schema({
             vol.Optional("recipe"): cv.string,
             vol.Optional("date"): cv.string,
+        }),
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        "add_dinner",
+        handle_add_dinner,
+        schema=vol.Schema({
+            vol.Required("title"): cv.string,
+            vol.Required("date"): cv.date,
+            vol.Optional("note"): cv.string,
+            vol.Optional("url"): cv.string,
         }),
         supports_response=SupportsResponse.OPTIONAL,
     )

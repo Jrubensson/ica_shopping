@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import uuid
 from collections.abc import Callable
 
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
@@ -23,6 +24,13 @@ STORAGE_KEY = f"{DOMAIN}_memory"
 # Keep the store small: at most this many dinners, and nothing older than this.
 HISTORY_MAX = 300
 HISTORY_MAX_AGE_DAYS = 120
+# Dinners added by hand have no ICA recipe; their ids carry this prefix and never an "@",
+# since calendar uids are "<id>@<date>".
+CUSTOM_ID_PREFIX = "custom-"
+
+
+def is_custom_id(recipe_id) -> bool:
+    return str(recipe_id).startswith(CUSTOM_ID_PREFIX)
 
 
 class DayTakenError(Exception):
@@ -78,6 +86,8 @@ class DinnerMemory:
         cutoff = dt_util.now().date() - dt.timedelta(days=days)
         ids: set[str] = set()
         for entry in self.history:
+            if is_custom_id(entry["id"]):
+                continue
             parsed = parse_date(entry.get("date"))
             if parsed is not None and parsed >= cutoff:
                 ids.add(str(entry["id"]))
@@ -124,6 +134,28 @@ class DinnerMemory:
             await self._async_save()
             _LOGGER.debug("🍽️ %d middagar sparade i minnet", added)
         return added
+
+    async def async_add_custom(
+        self, title: str, date: str, note: str | None = None, url: str | None = None
+    ) -> dict:
+        """Save a dinner that has no ICA recipe. Raises DayTakenError when `date` has a dinner."""
+        if any(e.get("date") == date for e in self.history):
+            raise DayTakenError(date)
+        entry = {
+            "id": f"{CUSTOM_ID_PREFIX}{uuid.uuid4().hex[:8]}",
+            "title": title,
+            "date": date,
+            "list": None,
+            "url": url or None,
+            "cooking_time": None,
+            "ingredients": [],
+            "note": note or None,
+            "custom": True,
+        }
+        self.history.append(entry)
+        self._trim()
+        await self._async_save()
+        return entry
 
     def _trim(self) -> None:
         cutoff = dt_util.now().date() - dt.timedelta(days=HISTORY_MAX_AGE_DAYS)

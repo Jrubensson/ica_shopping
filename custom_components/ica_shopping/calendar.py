@@ -58,7 +58,9 @@ def _to_event(entry: dict) -> CalendarEvent | None:
     day = parse_date(entry.get("date"))
     if day is None:
         return None
-    description = format_description(entry.get("cooking_time"), entry.get("url"), entry.get("ingredients"))
+    description = format_description(
+        entry.get("cooking_time"), entry.get("url"), entry.get("ingredients"), note=entry.get("note")
+    )
     return CalendarEvent(
         start=day,
         end=day + dt.timedelta(days=1),

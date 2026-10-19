@@ -25,6 +25,7 @@ from homeassistant.helpers.aiohttp_client import (
     async_create_clientsession,
     async_get_clientsession,
 )
+from homeassistant.util import dt as dt_util
 
 from .const import (
     ACR,
@@ -37,6 +38,8 @@ from .const import (
     LOGIN_ENDPOINT,
     RECIPE_PATH,
     OFFER_PATH,
+    PUBLIC_TOKEN_URL,
+    RECIPE_SEARCH_URL,
     REDIRECT_URI,
     REGISTER_ENDPOINT,
     SL_PATH,
@@ -229,6 +232,7 @@ class ICAApi:
         self._on_auth_update = on_auth_update
         self._on_auth_failed = on_auth_failed
         self._lock = asyncio.Lock()
+        self._public_token: tuple[str, float] | None = None
 
     @property
     def auth_state(self) -> dict:
@@ -395,6 +399,49 @@ class ICAApi:
         except (aiohttp.ClientError, asyncio.TimeoutError) as err:
             raise IcaConnectionError(f"{method} {path}: {err}") from err
 
+    async def _get_public_token(self, force_refresh: bool = False) -> str:
+        if not force_refresh and self._public_token and self._public_token[1] > time.time() + EARLY_REFRESH_SECONDS:
+            return self._public_token[0]
+        session = async_get_clientsession(self.hass)
+        try:
+            async with session.get(
+                PUBLIC_TOKEN_URL, headers={"User-Agent": USER_AGENT}, timeout=TIMEOUT
+            ) as resp:
+                await _check(resp, "public token")
+                data = await resp.json()
+        except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+            raise IcaConnectionError(f"public token: {err}") from err
+        token = data.get("publicAccessToken") if isinstance(data, dict) else None
+        if not token:
+            raise IcaApiError("public token: no publicAccessToken in the response")
+        expires = dt_util.parse_datetime(data.get("tokenExpires") or "")
+        self._public_token = (token, expires.timestamp() if expires else time.time() + 120)
+        return token
+
+    async def _public_get(self, url: str, params: dict, _retry: bool = True) -> Any:
+        token = await self._get_public_token(force_refresh=not _retry)
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "User-Agent": USER_AGENT,
+        }
+        session = async_get_clientsession(self.hass)
+        try:
+            async with session.get(url, params=params, headers=headers, timeout=TIMEOUT) as resp:
+                if resp.status == 401 and _retry:
+                    return await self._public_get(url, params, _retry=False)
+                if resp.status == 451:
+                    raise IcaGeoBlockedError("ICA gateway geo-blocks non-Swedish IPs (HTTP 451)")
+                if resp.status >= 400:
+                    body = (await resp.text())[:300]
+                    if resp.status >= 500:
+                        raise IcaConnectionError(f"GET {url}: HTTP {resp.status}: {body}")
+                    raise IcaApiError(f"GET {url}: HTTP {resp.status}: {body}")
+                body = await resp.text()
+                return json.loads(body) if body.strip() else None
+        except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+            raise IcaConnectionError(f"GET {url}: {err}") from err
+
     def _handle_error(self, action: str, err: IcaError) -> None:
         _LOGGER.error("❗ ICA %s misslyckades: %s", action, err)
         if isinstance(err, IcaAuthError) and self._on_auth_failed:
@@ -436,6 +483,16 @@ class ICAApi:
 
     async def async_get_recipe(self, recipe_id) -> dict:
         return await self._request("GET", f"{RECIPE_PATH}/recipes/{recipe_id}?api-version=2.0") or {}
+
+    async def async_search_recipes(self, query: str, limit: int = 10) -> list[dict]:
+        """ica.se's recipe search; ids are the same as the mobile API's recipe ids."""
+        data = await self._public_get(
+            f"{RECIPE_SEARCH_URL}/page/recipes",
+            {"url": "/", "query": query, "skip": 0, "take": limit},
+        )
+        if not isinstance(data, list):
+            return []
+        return [r for r in data if isinstance(r, dict) and r.get("id")][:limit]
 
     async def async_get_bonus(self) -> dict:
         return await self._request("GET", f"{BONUS_PATH}/bonus/current") or {}

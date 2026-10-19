@@ -70,6 +70,51 @@ plan_dinners:
           max: 365
           mode: box
 
+search_recipes:
+  description: "Search ICA's recipes. Each result's id works in plan_dinners' recipes."
+  fields:
+    query:
+      description: "What to search for"
+      example: "lasagne"
+      required: true
+      selector:
+        text:
+    limit:
+      description: "How many recipes to return (1–30)"
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 30
+          mode: box
+
+add_dinner:
+  description: "Save a dinner of your own, without an ICA recipe"
+  fields:
+    title:
+      description: "What you're having"
+      example: "Mormors kålpudding"
+      required: true
+      selector:
+        text:
+    date:
+      description: "The day of the dinner"
+      required: true
+      selector:
+        date:
+    note:
+      description: "Optional note, shown in the calendar event"
+      example: "Dubbel sats, frys hälften"
+      selector:
+        text:
+          multiline: true
+    url:
+      description: "Optional link to a recipe"
+      example: "https://www.koket.se/kalpudding"
+      selector:
+        text:
+          type: url
+
 get_memory:
   description: "Return the saved dinner history and preferences"
   fields: {}

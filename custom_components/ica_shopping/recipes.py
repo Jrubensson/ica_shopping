@@ -6,8 +6,9 @@ import random
 import re
 from typing import Iterable
 
-from .const import MAX_ICA_ITEMS
+from .const import MAX_ICA_ITEMS, RECIPE_IMAGE_BASE
 from .ica_api import ICAApi, IcaApiError, IcaError, list_matches
+from .memory import is_custom_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -116,8 +117,8 @@ def event_description(recipe: dict) -> str:
     return format_description(recipe.get("cookingTime"), recipe_url(recipe), recipe_ingredients(recipe))
 
 
-def format_description(cooking_time, url, ingredients) -> str:
-    parts = [str(p) for p in (cooking_time, url) if p]
+def format_description(cooking_time, url, ingredients, note=None) -> str:
+    parts = [str(p) for p in (note, cooking_time, url) if p]
     lines = [f"• {line}" for line in ingredients or [] if line]
     return "\n\n".join(p for p in ("\n".join(parts), "\n".join(lines)) if p)
 
@@ -141,6 +142,21 @@ def dinner_summary(recipe: dict) -> dict:
     }
 
 
+def search_summary(result: dict) -> dict:
+    """A recipe search hit, with the field names dinner_summary uses."""
+    image = result.get("imageUrl")
+    if isinstance(image, str) and image and not image.startswith("http"):
+        image = f"{RECIPE_IMAGE_BASE}/{image.lstrip('/')}"
+    return {
+        "id": result.get("id"),
+        "title": result.get("title"),
+        "cooking_time": result.get("cookingTime"),
+        "url": recipe_url(result),
+        "image": image or None,
+        "ingredient_count": result.get("numberOfIngredients"),
+    }
+
+
 async def async_fetch_recipes(
     api: ICAApi,
     count: int,
@@ -151,7 +167,8 @@ async def async_fetch_recipes(
     avoid = {str(i) for i in (avoid_ids or ())}
     if recipe_ids:
         # Committing a plan the caller already picked: fetch exactly those recipes.
-        picked = list(dict.fromkeys(str(r) for r in recipe_ids))
+        # Custom dinners have no ICA recipe to fetch.
+        picked = [r for r in dict.fromkeys(str(r) for r in recipe_ids) if not is_custom_id(r)]
         return [r for r in [await api.async_get_recipe(i) for i in picked] if r]
 
     if source == SOURCE_FAVORITES:

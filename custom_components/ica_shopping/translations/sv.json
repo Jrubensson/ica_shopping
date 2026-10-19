@@ -104,6 +104,12 @@
     },
     "dinner_not_found": {
       "message": "Middagen finns inte längre i middagsminnet ({uid})."
+    },
+    "search_recipes_failed": {
+      "message": "Det gick inte att söka bland ICA:s recept: {error}"
+    },
+    "add_dinner_calendar_failed": {
+      "message": "Det gick inte att lägga till {title} i {entity_id} ({error}). Middagen är sparad i ICA:s middagskalender, så lägg inte till den igen – lägg till händelsen för hand."
     }
   },
   "services": {
@@ -118,6 +124,42 @@
     "get_offers": {
       "name": "Hämta erbjudanden",
       "description": "Returnerar favoritbutikens aktuella erbjudanden och bonusläget."
+    },
+    "search_recipes": {
+      "name": "Sök recept",
+      "description": "Sök bland ICA:s recept. Varje träffs id kan användas som recept-id i Planera middagar.",
+      "fields": {
+        "query": {
+          "name": "Sök",
+          "description": "Vad du söker efter, t.ex. 'lasagne' eller 'kyckling curry'."
+        },
+        "limit": {
+          "name": "Antal",
+          "description": "Hur många recept som ska returneras (1–30)."
+        }
+      }
+    },
+    "add_dinner": {
+      "name": "Lägg till middag",
+      "description": "Spara en egen middag utan ICA-recept. Den visas i middagskalendern och standardkalendern.",
+      "fields": {
+        "title": {
+          "name": "Titel",
+          "description": "Vad ni ska äta."
+        },
+        "date": {
+          "name": "Datum",
+          "description": "Dagen för middagen. Varje dag har en middag."
+        },
+        "note": {
+          "name": "Anteckning",
+          "description": "Valfritt. Visas i kalenderhändelsen."
+        },
+        "url": {
+          "name": "Länk",
+          "description": "Valfri länk till ett recept, visas i kalenderhändelsen."
+        }
+      }
     },
     "get_memory": {
       "name": "Hämta middagsminnet",

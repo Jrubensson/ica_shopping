@@ -104,6 +104,12 @@
     },
     "dinner_not_found": {
       "message": "That dinner isn't in the dinner memory any more ({uid})."
+    },
+    "search_recipes_failed": {
+      "message": "Searching ICA's recipes failed: {error}"
+    },
+    "add_dinner_calendar_failed": {
+      "message": "Couldn't add {title} to {entity_id} ({error}). It's saved in the ICA dinner calendar, so don't add it again — add the event by hand."
     }
   },
   "services": {
@@ -118,6 +124,42 @@
     "get_offers": {
       "name": "Get offers",
       "description": "Return the favourite store's current offers and the bonus balance."
+    },
+    "search_recipes": {
+      "name": "Search recipes",
+      "description": "Search ICA's recipes. Each result's id can be passed to Plan dinners as a recipe id.",
+      "fields": {
+        "query": {
+          "name": "Search",
+          "description": "What to search for, e.g. 'lasagne' or 'kyckling curry'."
+        },
+        "limit": {
+          "name": "Limit",
+          "description": "How many recipes to return (1–30)."
+        }
+      }
+    },
+    "add_dinner": {
+      "name": "Add a dinner",
+      "description": "Save a dinner of your own, without an ICA recipe. It shows in the Dinners calendar and the default calendar.",
+      "fields": {
+        "title": {
+          "name": "Title",
+          "description": "What you're having."
+        },
+        "date": {
+          "name": "Date",
+          "description": "The day of the dinner. Each day holds one dinner."
+        },
+        "note": {
+          "name": "Note",
+          "description": "Optional. Shown in the calendar event."
+        },
+        "url": {
+          "name": "Link",
+          "description": "Optional link to a recipe, shown in the calendar event."
+        }
+      }
     },
     "get_memory": {
       "name": "Get dinner memory",

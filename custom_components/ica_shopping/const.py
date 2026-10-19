@@ -35,6 +35,11 @@ STORE_PATH = "sverige/digx/mobile/storeservice/v1"
 OFFER_PATH = "sverige/digx/mobile/offerservice/v1"
 BONUS_PATH = "sverige/digx/mobile/bonusservice/v1"
 
+# ica.se's recipe search; it takes the anonymous token ica.se hands every visitor.
+RECIPE_SEARCH_URL = "https://apim-pub.gw.ica.se/sverige/digx/mdsarecipesearch/v1"
+PUBLIC_TOKEN_URL = "https://www.ica.se/e11/public-access-token"
+RECIPE_IMAGE_BASE = "https://assets.icanet.se"
+
 USER_AGENT = (
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) "
     "AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148"
