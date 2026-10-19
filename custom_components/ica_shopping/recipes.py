@@ -9,6 +9,7 @@ from typing import Iterable
 from .const import MAX_ICA_ITEMS, RECIPE_IMAGE_BASE
 from .ica_api import ICAApi, IcaApiError, IcaError, list_matches
 from .memory import is_custom_id
+from .products import async_match_products
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -47,13 +48,32 @@ def _group_by_name(recipes: list[dict]) -> dict[str, list[tuple[dict, dict]]]:
     return groups
 
 
-def _summed_text(name: str, ings: list[dict]) -> str | None:
+def _summed_amount(ings: list[dict]) -> tuple[float, str | None] | None:
     units = {ing.get("unit") or "" for ing in ings}
     qtys = [ing.get("quantity") for ing in ings]
     if len(units) == 1 and all(isinstance(q, (int, float)) for q in qtys) and any(qtys):
-        unit = ings[0].get("unit")
-        return f"{sum(qtys):g}{(' ' + unit) if unit else ''} {name}".strip()
+        return sum(qtys), ings[0].get("unit")
     return None
+
+
+def _summed_text(name: str, ings: list[dict]) -> str | None:
+    if (amount := _summed_amount(ings)) is None:
+        return None
+    quantity, unit = amount
+    return f"{quantity:g}{(' ' + unit) if unit else ''} {name}".strip()
+
+
+def summed_ingredients(recipes: list[dict], skip_names: Iterable[str] = ()) -> list[dict]:
+    """[{name, text, quantity, unit}] for each ingredient whose lines add up to one amount."""
+    skip = {norm(n) for n in skip_names}
+    out = []
+    for key, pairs in _group_by_name(recipes).items():
+        ings = [ing for ing, _ in pairs]
+        if key in skip or (amount := _summed_amount(ings)) is None:
+            continue
+        name = _ingredient_name(ings[0])
+        out.append({"name": name, "text": _summed_text(name, ings), "quantity": amount[0], "unit": amount[1]})
+    return out
 
 
 def _distinct_lines(ings: list[dict]) -> list[str]:
@@ -224,12 +244,16 @@ async def async_plan_dinners(
     add_to_list: bool = True,
     recipe_ids: list | None = None,
     avoid_ids: Iterable | None = None,
+    match_products: bool = False,
+    store_account: str | None = None,
 ) -> tuple[dict | None, list[dict], dict]:
     """Return (target list, recipes, service response).
 
     With preview=True the list is left untouched and the response carries the menu and the
     merged ingredients, so a caller can show a suggestion before committing it.
     add_to_list=False also leaves the list untouched, for callers that shop elsewhere.
+    match_products=True swaps volume and weight amounts for an ICA product and package count
+    where one fits, searched at the store with `store_account`, and lists the swaps in "products".
     """
     recipes = await async_fetch_recipes(api, count, source, recipe_ids, avoid_ids)
     skip_names = {norm(n) for n in never_add}
@@ -237,6 +261,14 @@ async def async_plan_dinners(
     if not recipes and not only_custom:
         raise NoRecipesError(f"No {source} recipes returned")
     planned = [ing for ing in aggregate_ingredients(recipes) if norm(ing["name"]) not in skip_names]
+    extra: dict = {}
+    if match_products:
+        products = await async_match_products(
+            api, summed_ingredients(recipes, skip_names), store_account
+        )
+        swaps = {norm(p["ingredient"]): p["text"] for p in products}
+        planned = [{**ing, "text": swaps.get(norm(ing["name"]), ing["text"])} for ing in planned]
+        extra["products"] = products
 
     if preview or not add_to_list or not recipes:
         return None, recipes, {
@@ -247,6 +279,7 @@ async def async_plan_dinners(
             "ingredient_groups": group_ingredients(recipes, skip_names),
             "added": [],
             "skipped_list_full": [],
+            **extra,
         }
 
     target = await async_resolve_or_create_list(api, list_ref, default_list_id)
@@ -289,4 +322,5 @@ async def async_plan_dinners(
         "ingredients": [ing["text"] for ing in planned],
         "added": added,
         "skipped_list_full": skipped,
+        **extra,
     }

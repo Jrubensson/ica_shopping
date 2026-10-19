@@ -248,6 +248,10 @@
           "name": "Lägg till på listan",
           "description": "Lägg till ingredienserna på inköpslistan. Stäng av för att bara planera middagarna: de sparas ändå i middagsminnet och kalendern."
         },
+        "match_products": {
+          "name": "Matcha produkter",
+          "description": "Byt mängder i volym och vikt mot en ICA-produkt och hur många förpackningar som behövs, t.ex. '4.5 dl vispgrädde' → 'Vispgrädde 36% 5dl'. Ingredienser utan passande produkt behåller sin text."
+        },
         "recipes": {
           "name": "Recept-id",
           "description": "Recept-id att använda, t.ex. '123,456'. Ersätter count och source, så att exakt det förhandsgranskade menyn läggs till."

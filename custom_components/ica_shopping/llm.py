@@ -165,6 +165,13 @@ class PlanDinnersTool(_ServiceTool):
                 ),
             ): bool,
             _Optional(
+                "match_products",
+                description=(
+                    "true swaps amounts like '3 dl grädde' for an ICA product and package count "
+                    "(e.g. 'Vispgrädde 36% 5dl'); the result lists them in 'products'."
+                ),
+            ): bool,
+            _Optional(
                 "recipes",
                 description=(
                     "Comma-separated recipe ids to commit exactly, taken from an earlier "

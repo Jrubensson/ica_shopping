@@ -55,6 +55,11 @@ plan_dinners:
       default: true
       selector:
         boolean:
+    match_products:
+      description: "Swap amounts like '3 dl grädde' for an ICA product and package count."
+      default: false
+      selector:
+        boolean:
     recipes:
       description: "Recipe ids to use, e.g. '123,456'. Overrides count and source."
       example: "123,456"

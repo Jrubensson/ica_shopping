@@ -248,6 +248,10 @@
           "name": "Add to list",
           "description": "Add the ingredients to the shopping list. Turn off to only plan the dinners: they are still saved in the dinner memory and calendar."
         },
+        "match_products": {
+          "name": "Match products",
+          "description": "Swap volume and weight amounts for an ICA product and how many packages to buy, e.g. '4.5 dl vispgrädde' → 'Vispgrädde 36% 5dl'. Ingredients with no fitting product keep their text."
+        },
         "recipes": {
           "name": "Recipe ids",
           "description": "Recipe ids to use, e.g. '123,456'. Overrides count and source, so exactly the previewed menu is added."

@@ -522,6 +522,26 @@ async def async_setup(hass, config):
         supports_response=SupportsResponse.ONLY,
     )
 
+    async def _store_account_number(api: ICAApi, options: dict) -> str | None:
+        """The favourite store's account number for the product search, cached per store choice."""
+        data = hass.data[DOMAIN]
+        choice = options.get(CONF_STORE_ID)
+        cached = data.get("store_account")
+        if cached and cached[0] == choice:
+            return cached[1]
+        try:
+            store_id = choice
+            if not store_id:
+                stores = await api.async_get_favorite_stores()
+                store_id = stores[0]["id"] if stores else None
+            account = await api.async_get_store_account_number(store_id) if store_id else None
+        except IcaError as err:
+            # Searching all stores still works, just less precisely.
+            _LOGGER.debug("Kunde inte hitta butikens kontonummer: %s", err)
+            return None
+        data["store_account"] = (choice, account)
+        return account
+
     async def handle_plan_dinners(call: ServiceCall) -> ServiceResponse:
         sync = _sync_or_raise()
         data = hass.data[DOMAIN]
@@ -533,6 +553,10 @@ async def async_setup(hass, config):
         avoid_days = call.data.get("avoid_days", 0) or 0
         avoid_ids = memory.recent_ids(avoid_days) if memory is not None else None
         calendar = None if preview else _pick_calendar(hass, call.data.get("calendar"), options)
+        match_products = call.data.get("match_products", False)
+        store_account = (
+            await _store_account_number(data[DATA_ICA], options) if match_products else None
+        )
         try:
             # Not held across sync() below, which takes the same lock.
             async with data.setdefault("sync_lock", asyncio.Lock()):
@@ -547,6 +571,8 @@ async def async_setup(hass, config):
                     add_to_list=call.data.get("add_to_list", True),
                     recipe_ids=recipe_ids,
                     avoid_ids=avoid_ids,
+                    match_products=match_products,
+                    store_account=store_account,
                 )
         except NoRecipesError as err:
             raise HomeAssistantError(
@@ -757,6 +783,7 @@ async def async_setup(hass, config):
             vol.Optional("start_date"): cv.date,
             vol.Optional("preview", default=False): cv.boolean,
             vol.Optional("add_to_list", default=True): cv.boolean,
+            vol.Optional("match_products", default=False): cv.boolean,
             # Recipe ids to commit exactly what was previewed; "1,2,3" is accepted too.
             vol.Optional("recipes"): vol.Any(cv.string, [vol.Coerce(str)]),
             # Skip recipes eaten within this many days (0 = don't skip).

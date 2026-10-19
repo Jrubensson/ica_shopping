@@ -38,8 +38,10 @@ from .const import (
     LOGIN_ENDPOINT,
     RECIPE_PATH,
     OFFER_PATH,
+    GLOBAL_SEARCH_URL,
     PUBLIC_TOKEN_URL,
     RECIPE_SEARCH_URL,
+    STORE_SEARCH_URL,
     REDIRECT_URI,
     REGISTER_ENDPOINT,
     SL_PATH,
@@ -428,18 +430,29 @@ class ICAApi:
         self._public_token = (token, expires.timestamp() if expires else time.time() + 120)
         return token
 
-    async def _public_get(self, url: str, params: dict, _retry: bool = True) -> Any:
+    async def _public_request(
+        self,
+        method: str,
+        url: str,
+        *,
+        params: dict | None = None,
+        json_body: Any = None,
+        _retry: bool = True,
+    ) -> Any:
         token = await self._get_public_token(force_refresh=not _retry)
         session = async_get_clientsession(self.hass)
         try:
-            async with session.get(
-                url, params=params, headers=_api_headers(token), timeout=TIMEOUT
+            async with session.request(
+                method, url, params=params, json=json_body,
+                headers=_api_headers(token), timeout=TIMEOUT,
             ) as resp:
                 if resp.status == 401 and _retry:
-                    return await self._public_get(url, params, _retry=False)
-                return await _read_json(resp, f"GET {url}")
+                    return await self._public_request(
+                        method, url, params=params, json_body=json_body, _retry=False
+                    )
+                return await _read_json(resp, f"{method} {url}")
         except (aiohttp.ClientError, asyncio.TimeoutError) as err:
-            raise IcaConnectionError(f"GET {url}: {err}") from err
+            raise IcaConnectionError(f"{method} {url}: {err}") from err
 
     def _handle_error(self, action: str, err: IcaError) -> None:
         _LOGGER.error("❗ ICA %s misslyckades: %s", action, err)
@@ -485,13 +498,41 @@ class ICAApi:
 
     async def async_search_recipes(self, query: str, limit: int = 10) -> list[dict]:
         """ica.se's recipe search; ids are the same as the mobile API's recipe ids."""
-        data = await self._public_get(
+        data = await self._public_request(
+            "GET",
             f"{RECIPE_SEARCH_URL}/page/recipes",
-            {"url": "/", "query": query, "skip": 0, "take": limit},
+            params={"url": "/", "query": query, "skip": 0, "take": limit},
         )
         if not isinstance(data, list):
             return []
         return [r for r in data if isinstance(r, dict) and r.get("id")][:limit]
+
+    async def async_search_products(
+        self, query: str, account_number: str | None = None, limit: int = 10
+    ) -> list[dict]:
+        """ica.se's product search, ranked by ICA; account_number narrows it to one store."""
+        data = await self._public_request(
+            "POST",
+            f"{GLOBAL_SEARCH_URL}/search/quicksearch",
+            json_body={
+                "queryString": query,
+                "take": limit,
+                "offset": 0,
+                "accountNumber": account_number or "0",
+                "searchDomain": "All",
+            },
+        )
+        documents = ((data or {}).get("products") or {}).get("documents") if isinstance(data, dict) else None
+        return [d for d in documents or [] if isinstance(d, dict) and d.get("displayName")]
+
+    async def async_get_store_account_number(self, store_id: str) -> str | None:
+        """The store's account number, which ica.se's searches use instead of its id."""
+        data = await self._public_request(
+            "GET", f"{STORE_SEARCH_URL}/search", params={"storeIds": store_id}
+        )
+        store = data[0] if isinstance(data, list) and data and isinstance(data[0], dict) else {}
+        account = store.get("accountNumber")
+        return str(account) if account else None
 
     async def async_get_bonus(self) -> dict:
         return await self._request("GET", f"{BONUS_PATH}/bonus/current") or {}
