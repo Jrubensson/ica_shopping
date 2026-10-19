@@ -250,7 +250,7 @@
         },
         "match_products": {
           "name": "Match products",
-          "description": "Swap volume and weight amounts for an ICA product and how many packages to buy, e.g. '4.5 dl vispgrädde' → 'Vispgrädde 36% 5dl'. Ingredients with no fitting product keep their text."
+          "description": "Swap recipe amounts for an ICA product and how many packages to buy, e.g. '4.5 dl vispgrädde' → 'Vispgrädde 36% 5dl' or '1 tsk oregano' → the smallest jar. Ingredients with no fitting product keep their text."
         },
         "recipes": {
           "name": "Recipe ids",

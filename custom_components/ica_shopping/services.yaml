@@ -56,7 +56,7 @@ plan_dinners:
       selector:
         boolean:
     match_products:
-      description: "Swap amounts like '3 dl grädde' for an ICA product and package count."
+      description: "Swap amounts like '3 dl grädde', '2 msk tomatpuré' or '1 gul lök' for an ICA product and package count."
       default: false
       selector:
         boolean:

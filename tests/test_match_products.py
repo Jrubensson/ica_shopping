@@ -15,9 +15,12 @@ from custom_components.ica_shopping.const import (
 from custom_components.ica_shopping.ica_api import ICAApi, IcaApiError, IcaRateLimitedError
 from custom_components.ica_shopping.products import (
     async_match_products,
+    choose_package,
     choose_product,
+    package_pieces,
     package_size,
     search_query,
+    small_measure,
     to_base,
 )
 from custom_components.ica_shopping.recipes import async_plan_dinners
@@ -172,7 +175,7 @@ async def test_a_rate_limited_search_is_retried():
     assert [r["text"] for r in results] == ["Mjölk 3% 1l ICA (10 dl mjölk)"]
 
 
-async def test_match_products_skips_failed_and_unmeasured_ingredients():
+async def test_match_products_skips_failed_and_unmatched_ingredients():
     async def search(query, account, limit):
         if query == "mjölk":
             raise IcaApiError("HTTP 500")
@@ -184,6 +187,7 @@ async def test_match_products_skips_failed_and_unmeasured_ingredients():
         {"name": "vispgrädde", "text": "4.5 dl vispgrädde", "quantity": 4.5, "unit": "dl"},
         {"name": "mjölk", "text": "1 l mjölk", "quantity": 1, "unit": "l"},
         {"name": "smör", "text": "2 msk smör", "quantity": 2, "unit": "msk"},
+        {"name": "pizzadeg", "text": "1 sats pizzadeg", "quantity": 1, "unit": "sats"},
     ]
 
     assert await async_match_products(api, wanted, "1003380") == [{
@@ -195,8 +199,9 @@ async def test_match_products_skips_failed_and_unmeasured_ingredients():
         "product_id": "42",
         "url": "https://x/42",
         "image": None,
+        "pantry": False,
     }]
-    assert [c.args[0] for c in api.async_search_products.await_args_list] == ["vispgrädde", "mjölk"]
+    assert [c.args[0] for c in api.async_search_products.await_args_list] == ["vispgrädde", "mjölk", "smör"]
     assert api.async_search_products.await_args_list[0].args[1] == "1003380"
 
 
@@ -460,3 +465,210 @@ async def test_searches_run_outside_the_list_lock():
         await _plan(api, match_products=True, store_account="1003380", list_lock=lock)
 
     assert held == {"search": False, "add": True}
+
+
+@pytest.mark.parametrize(
+    ("quantity", "unit", "expected"),
+    [
+        (2, "msk", ("measure", 30)),
+        (1, "tsk", ("measure", 5)),
+        (4, "port", ("measure", 400)),
+        (1, "nypa", ("pinch", 1)),
+        (0.5, "tärning", ("piece", 0.5)),
+        (2, None, ("piece", 2)),
+        (2, "förp", ("package", 2)),
+        (1, "sats", None),
+    ],
+)
+def test_small_measures(quantity, unit, expected):
+    assert small_measure(quantity, unit) == expected
+
+
+@pytest.mark.parametrize(
+    ("name", "pieces"),
+    [("Kycklingbuljong 12-p Bong", 12), ("Rödlök 2-pack Klass 1", 2), ("Gurka 1-pack Klass 1 ICA", 1),
+     ("Ägg M/L 20-p ICA", 20), ("Gul lök 500g Klass 1 ICA", None)],
+)
+def test_package_pieces(name, pieces):
+    assert package_pieces(name) == pieces
+
+
+def test_search_query_folds_accents_and_cloves():
+    assert search_query("mâchesallad") == "machesallad"
+    assert search_query("crème fraiche") == "creme fraiche"
+    assert search_query("vitlöksklyftor") == "vitlök"
+    assert search_query("gräddfil") == "gräddfil"
+
+
+def test_mache_is_found_despite_accent_spelling_and_adjective():
+    # The only hit at a Maxi for 'mâchesallad'.
+    products = [_p("Finbladig Machesallat Sköljd 65g ICA", "Sallad", "Grönsaker")]
+    assert choose_product(search_query("mâchesallad"), "weight", 65, products) == (products[0], 1)
+
+
+def test_a_plural_matches_its_singular_but_not_a_longer_word():
+    assert choose_package("tomater", "piece", 4, [_p("Tomatpuré 200g ICA", group="Kryddor")]) is None
+    onions = [_p("Gul lök 1kg Klass 1 ICA", group="Lök"), _p("Gul lök 500g Klass 1 ICA", group="Lök")]
+    assert choose_package("gula lökar", "piece", 2, onions) == (onions[1], 1)
+
+
+# Live at a Maxi.
+OREGANO = [
+    _p("Oregano 15g ICA Basic", "Kryddor", "Kryddor & smaksättare"),
+    _p("Oregano Torkad 7g ICA", "Kryddor", "Kryddor & smaksättare"),
+    _p("Oregano 30g Santa Maria", "Kryddor", "Kryddor & smaksättare"),
+    _p("Oregano 5g Santa Maria", "Kryddor", "Kryddor & smaksättare"),
+    _p("Oregano ICA I love eco  Klass 1", "Oregano", "Färska kryddor"),
+    _p("Oregano Torkad Eko 3g Culinar Sverige", "Kryddor", "Kryddor & smaksättare"),
+]
+TOMATPURE = [
+    _p("Tomatpuré 200g ICA", "Ketchup & senap", "Kryddor & smaksättare"),
+    _p("Tomatpuré 800g Durra"),
+    _p("Tomatpuré Ekologisk 200g ICA", "Ketchup & senap", "Kryddor & smaksättare"),
+    _p("Tomatpuré Triplo 185g Mutti", "Ketchup & senap", "Kryddor & smaksättare"),
+    _p("Tomatpuré vitlök 130g Mutti", "Ketchup & senap", "Kryddor & smaksättare"),
+]
+OLIVOLJA = [
+    _p("Olivolja 500ml Zeta", "Olja", "Kryddor & smaksättare"),
+    _p("Olivolja 2l ICA Basic", "Olja", "Kryddor & smaksättare"),
+    _p("Olivolja Spray 200ml Zeta", "Olja", "Kryddor & smaksättare"),
+]
+
+
+@pytest.mark.parametrize(
+    ("query", "kind", "amount", "products", "expected"),
+    [
+        ("oregano", "measure", 5, OREGANO, "Oregano 5g Santa Maria"),
+        ("tomatpuré", "measure", 30, TOMATPURE, "Tomatpuré Triplo 185g Mutti"),
+        ("olivolja", "measure", 30, OLIVOLJA, "Olivolja 500ml Zeta"),
+        ("oregano", "pinch", 1, OREGANO, "Oregano 5g Santa Maria"),
+    ],
+)
+def test_spoons_get_the_smallest_plain_package(query, kind, amount, products, expected):
+    product, count = choose_package(query, kind, amount, products)
+    assert (product["displayName"], count) == (expected, 1)
+
+
+BULJONG = [
+    _p("Kycklingbuljong 12-p Bong", "Buljong & fond", "Kryddor & smaksättare"),
+    _p("Kycklingbuljong tärning 120g ICA", "Buljong & fond", "Kryddor & smaksättare"),
+    _p("Kycklingbuljong Ekologisk 6-p Kung Markatta", "Buljong & fond", "Kryddor & smaksättare"),
+    _p("Buljong Kyckling 80g Maggi", "Polen", "Smaker från världen"),
+]
+HONSBULJONG = [
+    _p("Hönsbuljong Tärningar 12-p 6l Knorr", "Buljong & fond", "Kryddor & smaksättare"),
+    _p("Hönsbuljong Tärningar 6-p 3l Knorr", "Buljong & fond", "Kryddor & smaksättare"),
+]
+
+
+@pytest.mark.parametrize(
+    ("query", "cubes", "products", "expected"),
+    [
+        ("kycklingbuljong", 0.5, BULJONG, ("Kycklingbuljong 12-p Bong", 1)),
+        ("hönsbuljong", 3, HONSBULJONG, ("Hönsbuljong Tärningar 6-p 3l Knorr", 1)),
+        ("hönsbuljong", 8, HONSBULJONG, ("Hönsbuljong Tärningar 12-p 6l Knorr", 1)),
+        ("hönsbuljong", 8, HONSBULJONG[1:], ("Hönsbuljong Tärningar 6-p 3l Knorr", 2)),
+    ],
+)
+def test_cubes_are_counted_against_the_pack(query, cubes, products, expected):
+    product, count = choose_package(query, "piece", cubes, products)
+    assert (product["displayName"], count) == expected
+
+
+SPAGHETTI = [
+    _p("Spaghetti 1kg ICA", "Torkad pasta", "Pasta, ris & mos"),
+    _p("Spaghetti 2kg ICA", "Torkad pasta", "Pasta, ris & mos"),
+    _p("Spaghetti 500g Zeta", "Torkad pasta", "Pasta, ris & mos"),
+    _p("Spaghetti Ekologisk 500g ICA", "Torkad pasta", "Pasta, ris & mos"),
+]
+
+
+@pytest.mark.parametrize(
+    ("portions", "products", "expected"),
+    [
+        (4, SPAGHETTI, ("Spaghetti 500g Zeta", 1)),
+        (8, SPAGHETTI, ("Spaghetti 1kg ICA", 1)),
+        (8, SPAGHETTI[2:], ("Spaghetti 500g Zeta", 2)),
+    ],
+)
+def test_portions_count_packages_only_when_clearly_needed(portions, products, expected):
+    product, count = choose_package("spaghetti", "measure", portions * 100, products)
+    assert (product["displayName"], count) == expected
+
+
+def test_pieces_of_produce():
+    cucumbers = [
+        _p("Gurka 1-pack Klass 1 ICA", "Gurka", "Grönsaker"),
+        _p("Gurka saltgurka 400g Kinda Klass 1 ICA", "Gurka", "Grönsaker"),
+        _p("Hackad Gurka 575g ICA", "Gurka & rödbetor", "Grönsakskonserver"),
+    ]
+    assert choose_package("gurka", "piece", 1, cucumbers) == (cucumbers[0], 1)
+    red = [
+        _p("Picklad Rödlök 96g ICA", "Övriga grönsaker", "Grönsakskonserver"),
+        _p("Rödlök 2-pack Klass 1", "Rödlök", "Lök"),
+        _p("Rödlök 500g Klass 1 ICA", "Rödlök", "Lök"),
+    ]
+    assert choose_package("rödlök", "piece", 1, red) == (red[1], 1)
+    # One bag beats two packs; with only the 2-pack, its stated size counts.
+    assert choose_package("rödlökar", "piece", 4, red) == (red[2], 1)
+    assert choose_package("rödlökar", "piece", 4, red[:2]) == (red[1], 2)
+    loose = [_p("Gul lök 1kg Klass 1 ICA", group="Lök"), _p("Lök gul ca 180g Klass 1 ICA", group="Lök")]
+    assert choose_package("lök", "piece", 3, loose) == (loose[1], 1)
+
+
+def test_packages_are_counted_as_asked():
+    tins = [_p("Krossade tomater 400g ICA", group="Tomatkonserver"), _p("Krossade tomater 4x400g ICA", group="Tomatkonserver")]
+    assert choose_package("krossade tomater", "package", 2, tins) == (tins[0], 2)
+
+
+async def test_small_amounts_are_matched_and_pantry_staples_marked():
+    garlic = [_p("Vitlök färsk 80g Klass 1 ICA", "Vitlök", "Lök"), _p("Vitlök 250g Klass 1 ICA", "Vitlök", "Lök")]
+
+    async def search(query, *args):
+        return {"oregano": OREGANO, "vitlök": garlic, "spaghetti": SPAGHETTI}[query]
+
+    api = MagicMock()
+    api.async_search_products = AsyncMock(side_effect=search)
+    wanted = [
+        {"name": "oregano", "text": "1 tsk oregano", "quantity": 1, "unit": "tsk"},
+        {"name": "vitlöksklyftor", "text": "3 vitlöksklyftor", "quantity": 3, "unit": None},
+        {"name": "spaghetti", "text": "4 port spaghetti", "quantity": 4, "unit": "port"},
+    ]
+    results = await async_match_products(api, wanted, "1003380")
+    assert [(r["text"], r["count"], r["pantry"]) for r in results] == [
+        ("Oregano 5g Santa Maria (1 tsk oregano)", 1, True),
+        ("Vitlök färsk 80g Klass 1 ICA (3 vitlöksklyftor)", 1, False),
+        ("Spaghetti 500g Zeta (4 port spaghetti)", 1, False),
+    ]
+
+
+async def test_pieces_and_weight_on_one_product_keep_the_larger_count():
+    api = MagicMock()
+    api.async_search_products = AsyncMock(return_value=[_p("Gul lök 500g Klass 1 ICA", consumerItemId="7")])
+    wanted = [
+        {"name": "gul lök", "text": "2 gul lök", "quantity": 2, "unit": None},
+        {"name": "lök gul", "text": "800 g lök gul", "quantity": 800, "unit": "g"},
+    ]
+    results = await async_match_products(api, wanted, None)
+    assert {r["text"] for r in results} == {"2 × Gul lök 500g Klass 1 ICA (2 gul lök + 800 g lök gul)"}
+
+
+def test_a_describing_word_only_counts_when_nothing_is_plainly_named():
+    # Live at a Maxi for 'potatisar'.
+    products = [
+        _p("Kryddig Potatis 500g Peka", "Potatissallad", "Gratäng & röror"),
+        _p("Potatis Fast 1,2kg Klass 1", "Fast potatis", "Potatis"),
+    ]
+    assert choose_package("potatisar", "piece", 8, products) == (products[1], 1)
+    assert choose_package("potatisar", "piece", 8, products[:1]) == (products[0], 1)
+
+
+async def test_a_pot_of_herbs_is_never_dried():
+    api = MagicMock()
+    api.async_search_products = AsyncMock(return_value=[
+        _p("Basilika Torkad 10g ICA", "Kryddor", "Kryddor & smaksättare"),
+        _p("Basilika i kruka Klass 1 ICA", "Basilika", "Färska kryddor"),
+    ])
+    wanted = [{"name": "basilika", "text": "1 kruka basilika", "quantity": 1, "unit": "kruka"}]
+    results = await async_match_products(api, wanted, "1003380")
+    assert [(r["product"], r["pantry"]) for r in results] == [("Basilika i kruka Klass 1 ICA", False)]

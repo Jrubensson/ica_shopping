@@ -250,7 +250,7 @@
         },
         "match_products": {
           "name": "Matcha produkter",
-          "description": "Byt mängder i volym och vikt mot en ICA-produkt och hur många förpackningar som behövs, t.ex. '4.5 dl vispgrädde' → 'Vispgrädde 36% 5dl'. Ingredienser utan passande produkt behåller sin text."
+          "description": "Byt receptets mängder mot en ICA-produkt och hur många förpackningar som behövs, t.ex. '4.5 dl vispgrädde' → 'Vispgrädde 36% 5dl' eller '1 tsk oregano' → den minsta burken. Ingredienser utan passande produkt behåller sin text."
         },
         "recipes": {
           "name": "Recept-id",

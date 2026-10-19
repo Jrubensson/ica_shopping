@@ -296,7 +296,7 @@ async def async_plan_dinners(
     With preview=True the list is left untouched and the response carries the menu and the
     merged ingredients, so a caller can show a suggestion before committing it.
     add_to_list=False also leaves the list untouched, for callers that shop elsewhere.
-    match_products=True swaps volume and weight amounts for an ICA product and package count
+    match_products=True swaps recipe amounts for an ICA product and package count
     where one fits at the store with `store_account` (none without one), listed in "products".
     Only the list update holds `list_lock`, so slow searches don't block the to-do sync.
     """

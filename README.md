@@ -156,7 +156,7 @@ When `preview` is true or `add_to_list` is false, `list` is `null`, `added` is e
 
 ### Matching products
 
-With `match_products: true`, each ingredient measured in volume or weight is looked up in ICA's product search at your favourite store (the one picked in the options, otherwise the first in the ICA app). The list then gets the product and how many packages to buy, with the recipe amount after it:
+With `match_products: true`, each ingredient with an amount is looked up in ICA's product search at your favourite store (the one picked in the options, otherwise the first in the ICA app). The list then gets the product and how many packages to buy, with the recipe amount after it:
 
 | Recipe amount | On the list |
 |---|---|
@@ -164,19 +164,33 @@ With `match_products: true`, each ingredient measured in volume or weight is loo
 | `10 dl mjölk` | `Mjölk 3% 1l ICA (10 dl mjölk)` |
 | `250 g champinjoner` | `Champinjoner 400g Klass 1 ICA (250 g champinjoner)` |
 | `400 g krossade tomater` | `Tomater krossade 500g ICA Basic (400 g krossade tomater)` |
+| `65 g mâchesallad` | `Finbladig Machesallat Sköljd 65g ICA (65 g mâchesallad)` |
+| `2 msk tomatpuré` | `Tomatpuré Triplo 185g Mutti (2 msk tomatpuré)` |
+| `1 tsk oregano` | `Oregano 5g Santa Maria (1 tsk oregano)` |
+| `0.5 tärning kycklingbuljong` | `Kycklingbuljong 12-p Bong (0.5 tärning kycklingbuljong)` |
+| `4 port spaghetti` | `Spaghetti 500g Zeta (4 port spaghetti)` |
+| `1 gurka` | `Gurka 1-pack Klass 1 ICA (1 gurka)` |
+| `3 vitlöksklyftor` | `Vitlök färsk 80g Klass 1 ICA (3 vitlöksklyftor)` |
 
 The amount shows why the product is there, and keeps a second plan's row apart from the first when both pick the same product, so neither gets lost.
 
 How a product is picked:
 
-- Its name starts with the ingredient, so `Kokosmjölk` never stands in for mjölk, nor `Mikropopcorn med smör` for smör, and it is in the ICA category most of the matching products share.
-- Lactose-free, soured, flavoured, light, organic, frozen, smoked, cured and long-life variants are only picked when the recipe asks for them. Tinned products only count when nothing fresh fits.
+- Its name starts with the ingredient, so `Kokosmjölk` never stands in for mjölk, nor `Mikropopcorn med smör` for smör, and it is in the ICA category most of the matching products share. Accents don't count (`mâche` finds `Mache`), a plural finds its singular (`gula lökar` finds `Gul lök`), and a describing word in front (`Finbladig Machesallat`) is only accepted when no product is plainly named after the ingredient.
+- Lactose-free, soured, flavoured, light, organic, frozen, smoked, cured, spray and long-life variants are only picked when the recipe asks for them. Tinned products only count when nothing fresh fits.
 - Its size is in the same unit kind, and it isn't far bigger than needed: no 5 kg sack for 300 g.
 - Then the fewest packages, then a package close to the amount, then ICA's own ranking. When one package isn't enough the row says how many, e.g. `2 × Kycklingfilé Färsk Minutstrimlor 550g Kronfågel (600 g kycklingfilé)`. Ingredients that land on the same product are counted together.
 
-Ingredients counted in pieces (`2 gula lökar`), packages (`1 förp`) or spoons (`2 msk smör`), those with no fitting product, those whose search is slow or keeps being rate-limited by ICA, and everything when the favourite store can't be found keep their recipe text. In that last case the response says why: `"products_skipped": "no_store"` when no favourite store is set in the ICA app, or `"store_lookup_failed"` when ICA couldn't be reached for it.
+Amounts the shop doesn't sell by get the smallest normal package of that product, never a catering pack over 2 kg:
 
-The response gets a `products` list with each swap — `ingredient`, `needed` (the recipe amount), `product`, `count`, `text` (what goes on the list), `product_id`, `url` and `image` — so a preview shows what will be added. Pass `match_products: true` again when you commit; search results are kept for 30 minutes, so the commit picks the same products as the preview. `ingredient_groups` keeps the recipe amounts. The search uses ica.se's anonymous access, like `search_recipes`, and doesn't hold up the shopping-list sync while it runs.
+- Spoons, pinches and cloves (`msk`, `tsk`, `krm`, `nypa`, `klyfta`, `kvist`, …): one package, or more only when the amount needs it.
+- Portions (`port`) count as 100 g each, so `4 port spaghetti` is one 500 g pack and `8 port` one 1 kg pack, or two 500 g packs when that's all there is.
+- Pieces and cubes (`1 gurka`, `3 tärningar`): a pack that states how many it holds is counted against it (`3 tärningar` from a 6-pack is one pack); otherwise a loose item or the smallest bag, once, with the recipe amount in the text.
+- Packages (`2 förp`, `1 burk`): that many of the smallest package. A pot or bunch of herbs (`1 kruka basilika`) is never matched to a dried jar.
+
+Ingredients with an amount the matcher doesn't know (`1 sats`), those with no fitting product, those whose search is slow or keeps being rate-limited by ICA, and everything when the favourite store can't be found keep their recipe text. In that last case the response says why: `"products_skipped": "no_store"` when no favourite store is set in the ICA app, or `"store_lookup_failed"` when ICA couldn't be reached for it.
+
+The response gets a `products` list with each swap — `ingredient`, `needed` (the recipe amount), `product`, `count`, `text` (what goes on the list), `product_id`, `url`, `image` and `pantry` — so a preview shows what will be added. `pantry` is `true` for spices, dried herbs, stock, tomato purée, oil, flour, sugar and salt, which most kitchens already have, so a UI can leave them unticked; they are still added unless you leave them out or put them in the never-add list. Pass `match_products: true` again when you commit; search results are kept for 30 minutes, so the commit picks the same products as the preview. `ingredient_groups` keeps the recipe amounts. The search uses ica.se's anonymous access, like `search_recipes`, and doesn't hold up the shopping-list sync while it runs.
 
 ### Preview, then commit what you picked
 
