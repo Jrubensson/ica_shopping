@@ -568,7 +568,7 @@ class ICAApi:
         for store_id in data.get("favoriteStores") or []:
             try:
                 store = await self._request("GET", f"{STORE_PATH}/stores/{store_id}") or {}
-            except IcaApiError:
+            except (IcaApiError, IcaRateLimitedError):
                 store = {}
             stores.append({
                 "id": str(store.get("id") or store_id),

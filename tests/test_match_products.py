@@ -414,9 +414,28 @@ async def test_service_falls_back_to_all_stores(hass):
     plan = AsyncMock(return_value=(None, [], {"dinners": [], "added": [], "list": None}))
 
     with patch("custom_components.ica_shopping.async_plan_dinners", plan):
-        await _commit_with_products(hass)
+        response = await _commit_with_products(hass)
 
     assert plan.await_args.kwargs["store_account"] is None
+    assert response["products_skipped"] == "store_lookup_failed"
+
+
+async def test_service_reports_a_missing_favourite_store(hass):
+    api = MagicMock()
+    api.async_get_favorite_stores = AsyncMock(return_value=[])
+    await _setup(hass, api, {})
+    plan = AsyncMock(return_value=(None, [], {"dinners": [], "added": [], "list": None}))
+
+    with patch("custom_components.ica_shopping.async_plan_dinners", plan):
+        response = await _commit_with_products(hass)
+
+    assert response["products_skipped"] == "no_store"
+
+
+async def test_a_rate_limited_store_detail_still_lists_the_favourite(hass):
+    api = ICAApi(hass, "199001011234", "pw")
+    api._request = AsyncMock(side_effect=[{"favoriteStores": [11920]}, IcaRateLimitedError("HTTP 429")])
+    assert await api.async_get_favorite_stores() == [{"id": "11920", "name": "Butik 11920", "city": None}]
 
 
 async def test_searches_run_outside_the_list_lock():

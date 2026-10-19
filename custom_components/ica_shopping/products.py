@@ -30,17 +30,16 @@ _SIZE = re.compile(r"(?:(\d+)\s*[x×]\s*)?(\d+(?:[.,]\d+)?)\s*(ml|cl|dl|l|g|hg|k
 # "Lök gul ca 180g" is a loose item weighed at the till, not a package.
 _APPROXIMATE = re.compile(r"\bca\.?\s*\d", re.I)
 # Variants (in the name or ICA category) are only picked when the recipe asks for them.
-# Most match at a word start ('eco' isn't in 'Pecorino'); 'rökt' also ends compounds like
-# 'Varmrökt', and 'lätt' stands alone so 'Lättsaltat' smör still counts as plain.
 VARIANT_WORDS = (
     "laktosfri", "låglaktos", "syrad", "ekologisk", "krav", "eco", "vegan", "glutenfri",
     "smaksatt", "tryffel", "hållbarhet", "fryst", "alkoholfri", "mousserande", "gravad",
     "i lake", "marinerad", "chili", "vitlök", "citron", "örter",
 )
 _VARIANT_PATTERNS = [
+    # At a word start, so 'eco' isn't found in 'Pecorino'.
     *((w, re.compile(rf"\b{w}")) for w in VARIANT_WORDS),
-    ("rökt", re.compile("rökt")),
-    ("lätt", re.compile(r"\blätt\b")),
+    ("rökt", re.compile("rökt")),  # Also inside 'Varmrökt'.
+    ("lätt", re.compile(r"\blätt\b")),  # Not 'Lättsaltat', which is plain smör.
 ]
 RATE_LIMIT_RETRIES = 2
 RATE_LIMIT_BACKOFF_SECONDS = 2
@@ -111,8 +110,7 @@ def _is_canned(product: dict) -> bool:
 def choose_product(
     query: str, dimension: str, needed: float, products: list[dict]
 ) -> tuple[dict, int] | None:
-    """Fewest packages, then a good fit, then ICA's ranking, among relevant non-variant
-    products in the category most of them share."""
+    """The product and package count to buy, or None when nothing fits."""
     words = _words(query)
     if not words or needed <= 0:
         return None

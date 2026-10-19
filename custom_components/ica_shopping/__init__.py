@@ -530,24 +530,26 @@ async def async_setup(hass, config):
         supports_response=SupportsResponse.ONLY,
     )
 
-    async def _store_account_number(api: ICAApi, options: dict) -> str | None:
-        """The favourite store's account number for the product search, cached for a day."""
+    async def _store_account_number(api: ICAApi, options: dict) -> tuple[str | None, str | None]:
+        """(account number, why there is none) for the product search; found ones are kept a day."""
         data = hass.data[DOMAIN]
         choice = options.get(CONF_STORE_ID)
         cached = data.get("store_account")
         if cached and cached[0] == choice and time.monotonic() - cached[2] < STORE_ACCOUNT_CACHE_SECONDS:
-            return cached[1]
+            return cached[1], None
         try:
             store = pick_store(await api.async_get_favorite_stores(), choice)
-            account = await api.async_get_store_account_number(store["id"]) if store else None
+            if store is None:
+                return None, "no_store"
+            account = await api.async_get_store_account_number(store["id"])
         except IcaError as err:
-            _LOGGER.debug("Kunde inte hitta butikens kontonummer: %s", err)
+            _LOGGER.warning("⚠️ Kunde inte hitta butikens kontonummer för produktmatchning: %s", err)
             account = None
         if account is None:
-            # Searching all stores still works, just less precisely; try the store again next time.
-            return None
+            # Not cached, so the next plan tries the lookup again.
+            return None, "store_lookup_failed"
         data["store_account"] = (choice, account, time.monotonic())
-        return account
+        return account, None
 
     async def handle_plan_dinners(call: ServiceCall) -> ServiceResponse:
         sync = _sync_or_raise()
@@ -561,8 +563,8 @@ async def async_setup(hass, config):
         avoid_ids = memory.recent_ids(avoid_days) if memory is not None else None
         calendar = None if preview else _pick_calendar(hass, call.data.get("calendar"), options)
         match_products = call.data.get("match_products", False)
-        store_account = (
-            await _store_account_number(data[DATA_ICA], options) if match_products else None
+        store_account, products_skipped = (
+            await _store_account_number(data[DATA_ICA], options) if match_products else (None, None)
         )
         try:
             target, recipes, result = await async_plan_dinners(
@@ -593,6 +595,9 @@ async def async_setup(hass, config):
                 translation_key="plan_dinners_failed",
                 translation_placeholders={"error": str(err)},
             ) from err
+
+        if products_skipped:
+            result["products_skipped"] = products_skipped
 
         if not preview and result["added"] and list_matches(target, default_list_id):
             # Push the new rows to the to-do entity now instead of on the next refresh.

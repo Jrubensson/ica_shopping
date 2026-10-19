@@ -261,6 +261,8 @@ async def _async_add_to_list(
             continue
         if room <= 0:
             skipped.append(ing["text"])
+            # Ingredients sharing one product share a row; report it once.
+            present.add(text_key)
             continue
         if await api.add_to_list(target["id"], ing["text"]):
             added.append(ing["text"])
