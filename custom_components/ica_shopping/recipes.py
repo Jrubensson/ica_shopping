@@ -1,6 +1,8 @@
 """Dinner planning from ICA recipes, ported from kanylbullen/ica-mcp's plan_dinners."""
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 import random
 import re
@@ -232,56 +234,10 @@ async def async_resolve_or_create_list(api: ICAApi, ref: str | None, default_id:
     return await api.async_create_list(ref.strip())
 
 
-async def async_plan_dinners(
-    api: ICAApi,
-    *,
-    count: int,
-    source: str,
-    list_ref: str | None,
-    default_list_id: str,
-    never_add: Iterable[str],
-    preview: bool = False,
-    add_to_list: bool = True,
-    recipe_ids: list | None = None,
-    avoid_ids: Iterable | None = None,
-    match_products: bool = False,
-    store_account: str | None = None,
-) -> tuple[dict | None, list[dict], dict]:
-    """Return (target list, recipes, service response).
-
-    With preview=True the list is left untouched and the response carries the menu and the
-    merged ingredients, so a caller can show a suggestion before committing it.
-    add_to_list=False also leaves the list untouched, for callers that shop elsewhere.
-    match_products=True swaps volume and weight amounts for an ICA product and package count
-    where one fits, searched at the store with `store_account`, and lists the swaps in "products".
-    """
-    recipes = await async_fetch_recipes(api, count, source, recipe_ids, avoid_ids)
-    skip_names = {norm(n) for n in never_add}
-    only_custom = bool(recipe_ids) and all(is_custom_id(r) for r in recipe_ids)
-    if not recipes and not only_custom:
-        raise NoRecipesError(f"No {source} recipes returned")
-    planned = [ing for ing in aggregate_ingredients(recipes) if norm(ing["name"]) not in skip_names]
-    extra: dict = {}
-    if match_products:
-        products = await async_match_products(
-            api, summed_ingredients(recipes, skip_names), store_account
-        )
-        swaps = {norm(p["ingredient"]): p["text"] for p in products}
-        planned = [{**ing, "text": swaps.get(norm(ing["name"]), ing["text"])} for ing in planned]
-        extra["products"] = products
-
-    if preview or not add_to_list or not recipes:
-        return None, recipes, {
-            "list": None,
-            "preview": preview,
-            "dinners": [dinner_summary(r) for r in recipes],
-            "ingredients": [ing["text"] for ing in planned],
-            "ingredient_groups": group_ingredients(recipes, skip_names),
-            "added": [],
-            "skipped_list_full": [],
-            **extra,
-        }
-
+async def _async_add_to_list(
+    api: ICAApi, planned: list[dict], list_ref: str | None, default_list_id: str
+) -> tuple[dict, list[str], list[str]]:
+    """Add the planned ingredients to the list; returns (list, added, skipped_list_full)."""
     target = await async_resolve_or_create_list(api, list_ref, default_list_id)
     # Re-fetch: the overview may omit rows, and active rows decide what to skip.
     target = await api.async_get_list(target["id"]) or target
@@ -314,6 +270,63 @@ async def async_plan_dinners(
         _LOGGER.warning(
             "⚠️ ICA-listan är full (%d rader); hoppade över %d ingredienser", MAX_ICA_ITEMS, len(skipped)
         )
+    return target, added, skipped
+
+
+async def async_plan_dinners(
+    api: ICAApi,
+    *,
+    count: int,
+    source: str,
+    list_ref: str | None,
+    default_list_id: str,
+    never_add: Iterable[str],
+    preview: bool = False,
+    add_to_list: bool = True,
+    recipe_ids: list | None = None,
+    avoid_ids: Iterable | None = None,
+    match_products: bool = False,
+    store_account: str | None = None,
+    list_lock: asyncio.Lock | None = None,
+) -> tuple[dict | None, list[dict], dict]:
+    """Return (target list, recipes, service response).
+
+    With preview=True the list is left untouched and the response carries the menu and the
+    merged ingredients, so a caller can show a suggestion before committing it.
+    add_to_list=False also leaves the list untouched, for callers that shop elsewhere.
+    match_products=True swaps volume and weight amounts for an ICA product and package count
+    where one fits, searched at the store with `store_account`, and lists the swaps in "products".
+    Only the list update holds `list_lock`, so slow searches don't block the to-do sync.
+    """
+    recipes = await async_fetch_recipes(api, count, source, recipe_ids, avoid_ids)
+    skip_names = {norm(n) for n in never_add}
+    only_custom = bool(recipe_ids) and all(is_custom_id(r) for r in recipe_ids)
+    if not recipes and not only_custom:
+        raise NoRecipesError(f"No {source} recipes returned")
+    planned = [ing for ing in aggregate_ingredients(recipes) if norm(ing["name"]) not in skip_names]
+    extra: dict = {}
+    if match_products:
+        products = await async_match_products(
+            api, summed_ingredients(recipes, skip_names), store_account
+        )
+        swaps = {norm(p["ingredient"]): p["text"] for p in products}
+        planned = [{**ing, "text": swaps.get(norm(ing["name"]), ing["text"])} for ing in planned]
+        extra["products"] = products
+
+    if preview or not add_to_list or not recipes:
+        return None, recipes, {
+            "list": None,
+            "preview": preview,
+            "dinners": [dinner_summary(r) for r in recipes],
+            "ingredients": [ing["text"] for ing in planned],
+            "ingredient_groups": group_ingredients(recipes, skip_names),
+            "added": [],
+            "skipped_list_full": [],
+            **extra,
+        }
+
+    async with list_lock or contextlib.nullcontext():
+        target, added, skipped = await _async_add_to_list(api, planned, list_ref, default_list_id)
 
     return target, recipes, {
         "list": target.get("name"),

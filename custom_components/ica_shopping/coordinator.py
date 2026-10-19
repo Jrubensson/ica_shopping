@@ -7,7 +7,7 @@ from datetime import timedelta
 
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .ica_api import ICAApi, IcaError, offers_on_list, parse_bonus
+from .ica_api import ICAApi, IcaError, offers_on_list, parse_bonus, pick_store
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ class IcaOffersCoordinator(DataUpdateCoordinator[dict]):
         stores = await self._api.async_get_favorite_stores()
         if not stores:
             raise UpdateFailed("No favourite store set in the ICA app")
-        store = next((s for s in stores if s["id"] == self._store_id), stores[0])
+        store = pick_store(stores, self._store_id)
         self._offers = await self._api.async_get_store_offers(store["id"])
         self._store = store
         self._offers_fetched = time.monotonic()

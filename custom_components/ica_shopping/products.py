@@ -5,6 +5,7 @@ import asyncio
 import logging
 import math
 import re
+from collections import Counter
 
 from .ica_api import ICAApi, IcaError
 
@@ -21,9 +22,10 @@ PARALLEL_SEARCHES = 4
 _SIZE = re.compile(r"(?:(\d+)\s*[x×]\s*)?(\d+(?:[.,]\d+)?)\s*(ml|cl|dl|l|g|hg|kg)\b", re.I)
 # "Lök gul ca 180g" is a loose item weighed at the till, not a package.
 _APPROXIMATE = re.compile(r"\bca\.?\s*\d", re.I)
-# ICA ranks these variants high; they only win when the recipe asks for them or nothing else fits.
+# ICA ranks these variants high; they are only picked when the recipe asks for them.
 VARIANT_WORDS = (
     "laktosfri", "låglaktos", "syrad", "ekologisk", "krav", "vegan", "glutenfri", "smaksatt", "lätt",
+    "tryffel", "hållbarhet",
 )
 
 
@@ -56,27 +58,48 @@ def search_query(ingredient: str) -> str:
 
 
 def _words(text: str) -> list[str]:
-    return [w for w in re.split(r"[^0-9a-zåäöéü]+", text.lower()) if len(w) >= 3]
+    return [w for w in re.split(r"[\W_]+", text.lower()) if len(w) >= 3]
+
+
+def _relevant(name: str, words: list[str]) -> bool:
+    """ICA names start with what the product is ('Smör 82% 500g'), so the first word must
+    start with one of the query's words and every query word must start a word in the name.
+    That rejects 'Kokosmjölk' for mjölk and 'Mikropopcorn Med Smör' for smör.
+    """
+    tokens = name.lower().split()
+    return bool(tokens) and any(tokens[0].startswith(w) for w in words) and all(
+        any(t.startswith(w) for t in tokens) for w in words
+    )
+
+
+def _category(product: dict) -> str | None:
+    level2 = product.get("ecomCategoryNameLevel2") or []
+    return level2[0] if level2 else None
 
 
 def choose_product(
     query: str, dimension: str, needed: float, products: list[dict]
 ) -> tuple[dict, int] | None:
-    """The product and count that cover `needed`: plain products first, then the fewest
-    packages, then the least left over, then ICA's ranking.
+    """The product and count that cover `needed` with the fewest packages, then the least
+    left over, then ICA's ranking.
 
-    Only products whose name holds every word of the query and whose size is in the same
-    dimension count.
+    Only relevant products in the category most of them share, sized in the same
+    dimension and not a variant the query didn't ask for, count.
     """
     words = _words(query)
     query_lower = query.lower()
     if not words or needed <= 0:
         return None
+    relevant = [(rank, p) for rank, p in enumerate(products) if _relevant(p.get("displayName") or "", words)]
+    categories = Counter(c for _, p in relevant if (c := _category(p)))
+    if categories:
+        # Ties go to the category of ICA's best-ranked hit.
+        top = max(categories.values())
+        majority = next(_category(p) for _, p in relevant if categories.get(_category(p)) == top)
+        relevant = [(rank, p) for rank, p in relevant if _category(p) in (majority, None)]
     best = None
-    for rank, product in enumerate(products):
+    for rank, product in relevant:
         name = product.get("displayName") or ""
-        if not all(w in name.lower() for w in words):
-            continue
         size = package_size(name)
         if size is None or size[0] != dimension or size[1] <= 0:
             continue
@@ -84,8 +107,9 @@ def choose_product(
         if count > MAX_PACKAGES:
             continue
         described = " ".join([name, *(product.get("ecomCategoryNameLevel3") or [])]).lower()
-        variant = any(v in described and v not in query_lower for v in VARIANT_WORDS)
-        key = (variant, count, count * size[1] - needed, rank)
+        if any(v in described and v not in query_lower for v in VARIANT_WORDS):
+            continue
+        key = (count, count * size[1] - needed, rank)
         if best is None or key < best[0]:
             best = (key, product, count)
     return (best[1], best[2]) if best else None
@@ -128,7 +152,20 @@ async def async_match_products(
             "product_id": product.get("consumerItemId"),
             "url": product.get("friendlyUrl"),
             "image": product.get("image"),
+            "_needed": base[1],
         }
 
-    results = await asyncio.gather(*(match(item) for item in wanted))
-    return [r for r in results if r]
+    results = [r for r in await asyncio.gather(*(match(item) for item in wanted)) if r]
+    # '400 g gul lök' and '300 g lök' can land on the same bag; count packages for both together.
+    by_product: dict[str, list[dict]] = {}
+    for result in results:
+        by_product.setdefault(result["product_id"] or result["product"], []).append(result)
+    for shared in by_product.values():
+        if len(shared) > 1 and (size := package_size(shared[0]["product"])):
+            count = max(1, math.ceil(round(sum(r["_needed"] for r in shared) / size[1], 6)))
+            for result in shared:
+                result["count"] = count
+                result["text"] = product_text(result["product"], count)
+    for result in results:
+        del result["_needed"]
+    return results

@@ -1,3 +1,4 @@
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -22,8 +23,13 @@ from custom_components.ica_shopping.products import (
 from custom_components.ica_shopping.recipes import async_plan_dinners
 
 
-def _p(name, category="", **extra):
-    return {"displayName": name, "ecomCategoryNameLevel3": [category] if category else None, **extra}
+def _p(name, category="", group="", **extra):
+    return {
+        "displayName": name,
+        "ecomCategoryNameLevel2": [group] if group else None,
+        "ecomCategoryNameLevel3": [category] if category else None,
+        **extra,
+    }
 
 
 # Real names and ICA's order from a search for "crème fraiche" at a Maxi.
@@ -75,6 +81,36 @@ def test_a_variant_wins_when_the_recipe_asks_for_it():
     assert product["displayName"] == "Crème Fraiche 32% Laktosfri 2dl Arla®"
 
 
+def test_a_variant_is_not_a_fallback():
+    products = [_p("Grädde Syrad 30% 3dl Arla Ko®", "Mellangrädde")]
+    assert choose_product("grädde", "volume", 300, products) is None
+
+
+# Real names from searches at a Maxi: the ingredient word inside another product's name.
+@pytest.mark.parametrize(
+    ("query", "dimension", "needed", "products", "expected"),
+    [
+        ("mjölk", "volume", 400, [_p("Mjölk 3% 1l ICA", group="Mjölk"), _p("Kokosmjölk 400ml ICA Asia", group="Asien")], "Mjölk 3% 1l ICA"),
+        ("smör", "weight", 50, [_p("Mikropopcorn Med Smör 240g Maze", group="Popcorn"), _p("Smör 82% 500g ICA", group="Smör & Margarin")], "Smör 82% 500g ICA"),
+        ("pecorino", "weight", 30, [_p("Ostkex Pecorino & Truffle 75g", group="Kex"), _p("Pecorino Romano 150g ICA", group="Ost")], "Pecorino Romano 150g ICA"),
+        ("olja", "volume", 100, [_p("Tonfisk i olja 170g ICA", group="Fiskkonserver"), _p("MCT-olja 500ml", group="Olja")], None),
+        ("crème fraiche", "volume", 200, [_p("Crème fraiche 32% 2dl ICA", group="Crème fraiche")], "Crème fraiche 32% 2dl ICA"),
+    ],
+)
+def test_other_kinds_of_product_never_fit(query, dimension, needed, products, expected):
+    chosen = choose_product(query, dimension, needed, products)
+    assert (chosen[0]["displayName"] if chosen else None) == expected
+
+
+def test_only_the_shared_category_counts():
+    products = [
+        _p("Smör 82% 500g Arla", group="Smör & Margarin"),
+        _p("Smördeg på smör 280g ICA", group="Pizza, Paj & Deg"),
+        _p("Smör Normalsaltat 82% 500g ICA", group="Smör & Margarin"),
+    ]
+    assert choose_product("smör", "weight", 50, products)[0]["displayName"] == "Smör 82% 500g Arla"
+
+
 def test_fewest_packages_then_least_left_over():
     products = [_p("Vispgrädde 36% 2,5dl ICA"), _p("Vispgrädde 36% 5dl ICA"), _p("Vispgrädde 36% 1l ICA")]
     assert choose_product("vispgrädde", "volume", 450, products) == (products[1], 1)
@@ -88,6 +124,20 @@ def test_other_unit_kinds_and_other_words_never_fit():
 
 def test_more_than_six_packages_is_no_fit():
     assert choose_product("vispgrädde", "volume", 2000, [_p("Vispgrädde 36% 2,5dl ICA")]) is None
+
+
+async def test_ingredients_on_one_product_are_counted_together():
+    api = MagicMock()
+    api.async_search_products = AsyncMock(return_value=[_p("Gul lök 500g Klass 1 ICA", consumerItemId="7")])
+    wanted = [
+        {"name": "gul lök", "text": "400 g gul lök", "quantity": 400, "unit": "g"},
+        {"name": "lök gul", "text": "300 g lök gul", "quantity": 300, "unit": "g"},
+    ]
+    results = await async_match_products(api, wanted, None)
+    assert [(r["ingredient"], r["text"]) for r in results] == [
+        ("gul lök", "2 × Gul lök 500g Klass 1 ICA"),
+        ("lök gul", "2 × Gul lök 500g Klass 1 ICA"),
+    ]
 
 
 async def test_match_products_skips_failed_and_unmeasured_ingredients():
@@ -225,6 +275,7 @@ async def _commit_with_products(hass):
 
 async def test_service_searches_the_chosen_store_once(hass):
     api = MagicMock()
+    api.async_get_favorite_stores = AsyncMock(return_value=[{"id": "1"}, {"id": "11920"}])
     api.async_get_store_account_number = AsyncMock(return_value="1003380")
     await _setup(hass, api, {CONF_STORE_ID: "11920"})
     plan = AsyncMock(return_value=(None, [], {"dinners": [], "added": [], "list": None}))
@@ -238,6 +289,21 @@ async def test_service_searches_the_chosen_store_once(hass):
     assert plan.await_args.kwargs["store_account"] == "1003380"
 
 
+async def test_service_retries_a_store_lookup_that_found_nothing(hass):
+    api = MagicMock()
+    api.async_get_favorite_stores = AsyncMock(return_value=[{"id": "11920"}])
+    api.async_get_store_account_number = AsyncMock(side_effect=[None, "1003380"])
+    await _setup(hass, api, {})
+    plan = AsyncMock(return_value=(None, [], {"dinners": [], "added": [], "list": None}))
+
+    with patch("custom_components.ica_shopping.async_plan_dinners", plan):
+        await _commit_with_products(hass)
+        assert plan.await_args.kwargs["store_account"] is None
+        await _commit_with_products(hass)
+
+    assert plan.await_args.kwargs["store_account"] == "1003380"
+
+
 async def test_service_falls_back_to_all_stores(hass):
     api = MagicMock()
     api.async_get_favorite_stores = AsyncMock(side_effect=IcaApiError("HTTP 500"))
@@ -248,3 +314,27 @@ async def test_service_falls_back_to_all_stores(hass):
         await _commit_with_products(hass)
 
     assert plan.await_args.kwargs["store_account"] is None
+
+
+async def test_searches_run_outside_the_list_lock():
+    lock = asyncio.Lock()
+    held = {}
+    api = _api()
+
+    async def search(*args):
+        held["search"] = lock.locked()
+        return [_p("Vispgrädde 36% 5dl Skånemejerier")]
+
+    async def add(*args):
+        held["add"] = lock.locked()
+        return True
+
+    api.async_search_products = AsyncMock(side_effect=search)
+    api.add_to_list = AsyncMock(side_effect=add)
+    with patch(
+        "custom_components.ica_shopping.recipes.async_resolve_or_create_list",
+        AsyncMock(return_value={"id": "list", "name": "Handla", "rows": []}),
+    ):
+        await _plan(api, match_products=True, list_lock=lock)
+
+    assert held == {"search": False, "add": True}

@@ -39,7 +39,15 @@ from .const import (
     DEFAULT_NEVER_ADD,
     MAX_ICA_ITEMS,
 )
-from .ica_api import ICAApi, IcaAuthError, IcaError, format_offer, list_matches, parse_bonus
+from .ica_api import (
+    ICAApi,
+    IcaAuthError,
+    IcaError,
+    format_offer,
+    list_matches,
+    parse_bonus,
+    pick_store,
+)
 from .memory import HISTORY_MAX_AGE_DAYS, DayTakenError, DinnerMemory, DinnerTooOldError
 from .recipes import (
     SOURCE_FAVORITES,
@@ -60,6 +68,8 @@ PLATFORMS = ["sensor", "calendar"]
 # get_offers is called on each turn of a conversation; the store's offers only change daily,
 # so a short cache keeps a back-and-forth from hammering ICA's API. The sensor polls every 6 h.
 OFFERS_CACHE_SECONDS = 15 * 60
+# The favourite store rarely changes; a day keeps a switch in the ICA app from going unnoticed.
+STORE_ACCOUNT_CACHE_SECONDS = 24 * 60 * 60
 
 def _record_sync_result(hass, success: bool):
     """Store the outcome of a sync run so the Last Sync sensor can report it.
@@ -471,9 +481,7 @@ async def async_setup(hass, config):
                 raise HomeAssistantError(
                     translation_domain=DOMAIN, translation_key="no_favorite_store"
                 )
-            store = next(
-                (s for s in stores if s["id"] == options.get(CONF_STORE_ID)), stores[0]
-            )
+            store = pick_store(stores, options.get(CONF_STORE_ID))
             offers = await api.async_get_store_offers(store["id"])
             bonus = parse_bonus(await api.async_get_bonus())
         except IcaError as err:
@@ -523,23 +531,22 @@ async def async_setup(hass, config):
     )
 
     async def _store_account_number(api: ICAApi, options: dict) -> str | None:
-        """The favourite store's account number for the product search, cached per store choice."""
+        """The favourite store's account number for the product search, cached for a day."""
         data = hass.data[DOMAIN]
         choice = options.get(CONF_STORE_ID)
         cached = data.get("store_account")
-        if cached and cached[0] == choice:
+        if cached and cached[0] == choice and time.monotonic() - cached[2] < STORE_ACCOUNT_CACHE_SECONDS:
             return cached[1]
         try:
-            store_id = choice
-            if not store_id:
-                stores = await api.async_get_favorite_stores()
-                store_id = stores[0]["id"] if stores else None
-            account = await api.async_get_store_account_number(store_id) if store_id else None
+            store = pick_store(await api.async_get_favorite_stores(), choice)
+            account = await api.async_get_store_account_number(store["id"]) if store else None
         except IcaError as err:
-            # Searching all stores still works, just less precisely.
             _LOGGER.debug("Kunde inte hitta butikens kontonummer: %s", err)
+            account = None
+        if account is None:
+            # Searching all stores still works, just less precisely; try the store again next time.
             return None
-        data["store_account"] = (choice, account)
+        data["store_account"] = (choice, account, time.monotonic())
         return account
 
     async def handle_plan_dinners(call: ServiceCall) -> ServiceResponse:
@@ -558,22 +565,22 @@ async def async_setup(hass, config):
             await _store_account_number(data[DATA_ICA], options) if match_products else None
         )
         try:
-            # Not held across sync() below, which takes the same lock.
-            async with data.setdefault("sync_lock", asyncio.Lock()):
-                target, recipes, result = await async_plan_dinners(
-                    data[DATA_ICA],
-                    count=call.data["count"],
-                    source=call.data["source"],
-                    list_ref=call.data.get("list"),
-                    default_list_id=default_list_id,
-                    never_add=options.get(CONF_NEVER_ADD, DEFAULT_NEVER_ADD),
-                    preview=preview,
-                    add_to_list=call.data.get("add_to_list", True),
-                    recipe_ids=recipe_ids,
-                    avoid_ids=avoid_ids,
-                    match_products=match_products,
-                    store_account=store_account,
-                )
+            target, recipes, result = await async_plan_dinners(
+                data[DATA_ICA],
+                count=call.data["count"],
+                source=call.data["source"],
+                list_ref=call.data.get("list"),
+                default_list_id=default_list_id,
+                never_add=options.get(CONF_NEVER_ADD, DEFAULT_NEVER_ADD),
+                preview=preview,
+                add_to_list=call.data.get("add_to_list", True),
+                recipe_ids=recipe_ids,
+                avoid_ids=avoid_ids,
+                match_products=match_products,
+                store_account=store_account,
+                # Not held across sync() below, which takes the same lock.
+                list_lock=data.setdefault("sync_lock", asyncio.Lock()),
+            )
         except NoRecipesError as err:
             raise HomeAssistantError(
                 translation_domain=DOMAIN,

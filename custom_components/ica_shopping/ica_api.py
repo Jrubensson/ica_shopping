@@ -150,6 +150,11 @@ def format_offer(offer: dict) -> dict:
     }
 
 
+def pick_store(stores: list[dict], store_id: str | None) -> dict | None:
+    """The chosen favourite store, or the first one when it's not among the favourites."""
+    return next((s for s in stores if s["id"] == store_id), stores[0]) if stores else None
+
+
 def offers_on_list(rows: list[dict], offers: list[dict]) -> list[dict]:
     """Unchecked rows whose words (3+ letters) appear in an offer name."""
     matches = []

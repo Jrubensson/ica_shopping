@@ -164,9 +164,9 @@ With `match_products: true`, each ingredient measured in volume or weight is loo
 | `10 dl mjölk` | `Mjölk 3% 1l ICA` |
 | `400 g gul lök` | `Gul lök 500g Klass 1 ICA` |
 
-A product only counts when its name has every word of the ingredient and its size is in the same unit kind. The pick is the fewest packages, then the least left over. When one package isn't enough the row says how many, e.g. `2 × Vispgrädde 36% 5dl Skånemejerier`. Lactose-free, flavoured, light, organic and similar variants are only picked when the recipe asks for them or nothing else fits. Ingredients counted in pieces (`2 gula lökar`), packages (`1 förp`) or spoons (`2 msk smör`), and those with no fitting product, keep their recipe text.
+A product only counts when its name starts with the ingredient (so `Kokosmjölk` never stands in for mjölk, nor `Mikropopcorn med smör` for smör), it is in the ICA category most of the matching products share, and its size is in the same unit kind. The pick is the fewest packages, then the least left over. When one package isn't enough the row says how many, e.g. `2 × Vispgrädde 36% 5dl Skånemejerier`. Lactose-free, soured, flavoured, light, organic, long-life and similar variants are only picked when the recipe asks for them. Two ingredients that land on the same product, like `400 g gul lök` and `300 g lök`, are counted together. Ingredients counted in pieces (`2 gula lökar`), packages (`1 förp`) or spoons (`2 msk smör`), and those with no fitting product, keep their recipe text.
 
-The response gets a `products` list with each swap — `ingredient`, `needed` (the recipe amount), `product`, `count`, `text` (what goes on the list), `product_id`, `url` and `image` — so a preview shows exactly what will be added. The search uses ica.se's anonymous access, like `search_recipes`.
+The response gets a `products` list with each swap — `ingredient`, `needed` (the recipe amount), `product`, `count`, `text` (what goes on the list), `product_id`, `url` and `image` — so a preview shows exactly what will be added. `ingredient_groups` keeps the recipe amounts. The search uses ica.se's anonymous access, like `search_recipes`, and doesn't hold up the shopping-list sync while it runs.
 
 ### Preview, then commit what you picked
 
