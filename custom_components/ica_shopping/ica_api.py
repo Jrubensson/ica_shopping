@@ -52,6 +52,7 @@ _LOGGER = logging.getLogger(__name__)
 
 TIMEOUT = aiohttp.ClientTimeout(total=30)
 EARLY_REFRESH_SECONDS = 60
+PUBLIC_TOKEN_MARGIN_SECONDS = 15
 
 
 class IcaError(Exception):
@@ -215,6 +216,22 @@ async def _check(resp: aiohttp.ClientResponse, step: str) -> None:
     raise IcaAuthError(f"{step}: HTTP {resp.status}: {body}")
 
 
+def _api_headers(token: str) -> dict:
+    return {"Authorization": f"Bearer {token}", "Accept": "application/json", "User-Agent": USER_AGENT}
+
+
+async def _read_json(resp: aiohttp.ClientResponse, label: str) -> Any:
+    if resp.status == 451:
+        raise IcaGeoBlockedError("ICA gateway geo-blocks non-Swedish IPs (HTTP 451)")
+    if resp.status >= 400:
+        body = (await resp.text())[:300]
+        if resp.status >= 500:
+            raise IcaConnectionError(f"{label}: HTTP {resp.status}: {body}")
+        raise IcaApiError(f"{label}: HTTP {resp.status}: {body}")
+    body = await resp.text()
+    return json.loads(body) if body.strip() else None
+
+
 class ICAApi:
     def __init__(
         self,
@@ -374,41 +391,29 @@ class ICAApi:
     # ------------------------------------------------------------------ HTTP
     async def _request(self, method: str, path: str, json_body: Any = None, _retry: bool = True) -> Any:
         token = await self.async_get_access_token()
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/json",
-            "User-Agent": USER_AGENT,
-        }
         session = async_get_clientsession(self.hass)
         try:
             async with session.request(
-                method, f"{API_BASE}/{path}", headers=headers, json=json_body, timeout=TIMEOUT,
+                method, f"{API_BASE}/{path}", headers=_api_headers(token), json=json_body, timeout=TIMEOUT,
             ) as resp:
                 if resp.status == 401 and _retry:
                     await self.async_get_access_token(force_refresh=True)
                     return await self._request(method, path, json_body, _retry=False)
-                if resp.status == 451:
-                    raise IcaGeoBlockedError("ICA gateway geo-blocks non-Swedish IPs (HTTP 451)")
-                if resp.status >= 400:
-                    body = (await resp.text())[:300]
-                    if resp.status >= 500:
-                        raise IcaConnectionError(f"{method} {path}: HTTP {resp.status}: {body}")
-                    raise IcaApiError(f"{method} {path}: HTTP {resp.status}: {body}")
-                body = await resp.text()
-                return json.loads(body) if body.strip() else None
+                return await _read_json(resp, f"{method} {path}")
         except (aiohttp.ClientError, asyncio.TimeoutError) as err:
             raise IcaConnectionError(f"{method} {path}: {err}") from err
 
     async def _get_public_token(self, force_refresh: bool = False) -> str:
-        if not force_refresh and self._public_token and self._public_token[1] > time.time() + EARLY_REFRESH_SECONDS:
-            return self._public_token[0]
+        cached = self._public_token
+        # The token lives about 5 minutes and ica.se may hand out one with little time left.
+        if not force_refresh and cached and cached[1] > time.time() + PUBLIC_TOKEN_MARGIN_SECONDS:
+            return cached[0]
         session = async_get_clientsession(self.hass)
         try:
             async with session.get(
                 PUBLIC_TOKEN_URL, headers={"User-Agent": USER_AGENT}, timeout=TIMEOUT
             ) as resp:
-                await _check(resp, "public token")
-                data = await resp.json()
+                data = await _read_json(resp, "public token")
         except (aiohttp.ClientError, asyncio.TimeoutError) as err:
             raise IcaConnectionError(f"public token: {err}") from err
         token = data.get("publicAccessToken") if isinstance(data, dict) else None
@@ -420,25 +425,14 @@ class ICAApi:
 
     async def _public_get(self, url: str, params: dict, _retry: bool = True) -> Any:
         token = await self._get_public_token(force_refresh=not _retry)
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/json",
-            "User-Agent": USER_AGENT,
-        }
         session = async_get_clientsession(self.hass)
         try:
-            async with session.get(url, params=params, headers=headers, timeout=TIMEOUT) as resp:
+            async with session.get(
+                url, params=params, headers=_api_headers(token), timeout=TIMEOUT
+            ) as resp:
                 if resp.status == 401 and _retry:
                     return await self._public_get(url, params, _retry=False)
-                if resp.status == 451:
-                    raise IcaGeoBlockedError("ICA gateway geo-blocks non-Swedish IPs (HTTP 451)")
-                if resp.status >= 400:
-                    body = (await resp.text())[:300]
-                    if resp.status >= 500:
-                        raise IcaConnectionError(f"GET {url}: HTTP {resp.status}: {body}")
-                    raise IcaApiError(f"GET {url}: HTTP {resp.status}: {body}")
-                body = await resp.text()
-                return json.loads(body) if body.strip() else None
+                return await _read_json(resp, f"GET {url}")
         except (aiohttp.ClientError, asyncio.TimeoutError) as err:
             raise IcaConnectionError(f"GET {url}: {err}") from err
 

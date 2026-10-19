@@ -119,3 +119,10 @@ async def test_llm_tools_forward_their_arguments(hass):
     assert await _forwarded(
         hass, AddDinnerTool(), "add_dinner", {"title": "Tacos", "date": "2026-10-23"}
     ) == {"title": "Tacos", "date": "2026-10-23"}
+
+
+async def test_public_token_rejection_is_not_a_login_error(hass, aioclient_mock):
+    aioclient_mock.get(PUBLIC_TOKEN_URL, status=403)
+    api = ICAApi(hass, "199001011234", "pw")
+    with pytest.raises(IcaApiError):
+        await api.async_search_recipes("lasagne")

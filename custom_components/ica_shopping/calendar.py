@@ -26,7 +26,7 @@ from homeassistant.util import dt as dt_util
 
 from .const import CONF_LIST_ID, DOMAIN
 from .memory import DayTakenError, DinnerMemory, parse_date
-from .recipes import format_description
+from .recipes import entry_description
 from .sensor import device_info
 
 
@@ -58,9 +58,7 @@ def _to_event(entry: dict) -> CalendarEvent | None:
     day = parse_date(entry.get("date"))
     if day is None:
         return None
-    description = format_description(
-        entry.get("cooking_time"), entry.get("url"), entry.get("ingredients"), note=entry.get("note")
-    )
+    description = entry_description(entry)
     return CalendarEvent(
         start=day,
         end=day + dt.timedelta(days=1),

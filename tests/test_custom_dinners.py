@@ -2,6 +2,7 @@ import datetime as dt
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import voluptuous as vol
 from homeassistant.components.calendar import EVENT_DESCRIPTION, EVENT_END, EVENT_START
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
@@ -159,3 +160,37 @@ async def test_custom_ids_stay_out_of_ingredient_groups():
     )
     assert [d["id"] for d in result["dinners"]] == [679675]
     assert [g["dinners"] for g in result["ingredient_groups"]] == [["Lasagne"]]
+
+
+async def test_add_dinner_refuses_a_day_the_memory_would_drop(hass):
+    memory = DinnerMemory(hass)
+    await _setup(hass, memory)
+    calls = async_mock_service(hass, "calendar", "create_event")
+
+    with patch(
+        "custom_components.ica_shopping._pick_calendar", return_value="calendar.family"
+    ), pytest.raises(HomeAssistantError) as err:
+        await _add_dinner(hass, title="Kålpudding", date=iso(-130))
+
+    assert err.value.translation_key == "dinner_too_old"
+    assert calls == [] and memory.history == []
+
+
+async def test_add_dinner_rejects_an_empty_title(hass):
+    memory = DinnerMemory(hass)
+    await _setup(hass, memory)
+    with pytest.raises(vol.Invalid):
+        await _add_dinner(hass, title="  ", date=iso(1))
+    assert memory.history == []
+
+
+async def test_plan_dinners_with_only_custom_ids_plans_nothing():
+    api = MagicMock()
+    api.async_get_recipe = AsyncMock()
+    target, recipes, result = await async_plan_dinners(
+        api, count=1, source="random", list_ref=None, default_list_id="list",
+        never_add=[], recipe_ids=["custom-1a2b3c4d"],
+    )
+    assert target is None and recipes == []
+    assert result["dinners"] == [] and result["added"] == []
+    api.async_get_recipe.assert_not_called()

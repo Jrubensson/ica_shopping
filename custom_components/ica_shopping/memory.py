@@ -24,8 +24,7 @@ STORAGE_KEY = f"{DOMAIN}_memory"
 # Keep the store small: at most this many dinners, and nothing older than this.
 HISTORY_MAX = 300
 HISTORY_MAX_AGE_DAYS = 120
-# Dinners added by hand have no ICA recipe; their ids carry this prefix and never an "@",
-# since calendar uids are "<id>@<date>".
+# Ids of dinners without an ICA recipe; never an "@", since calendar uids are "<id>@<date>".
 CUSTOM_ID_PREFIX = "custom-"
 
 
@@ -35,6 +34,10 @@ def is_custom_id(recipe_id) -> bool:
 
 class DayTakenError(Exception):
     """The day already has a dinner; each day holds at most one."""
+
+
+class DinnerTooOldError(Exception):
+    """The day is older than the memory keeps, so the dinner would be dropped at once."""
 
 
 class DinnerMemory:
@@ -138,7 +141,14 @@ class DinnerMemory:
     async def async_add_custom(
         self, title: str, date: str, note: str | None = None, url: str | None = None
     ) -> dict:
-        """Save a dinner that has no ICA recipe. Raises DayTakenError when `date` has a dinner."""
+        """Save a dinner that has no ICA recipe.
+
+        Raises DayTakenError when `date` has a dinner, DinnerTooOldError when it is past the
+        HISTORY_MAX_AGE_DAYS the memory keeps.
+        """
+        cutoff = dt_util.now().date() - dt.timedelta(days=HISTORY_MAX_AGE_DAYS)
+        if (parsed := parse_date(date)) is None or parsed < cutoff:
+            raise DinnerTooOldError(date)
         if any(e.get("date") == date for e in self.history):
             raise DayTakenError(date)
         entry = {

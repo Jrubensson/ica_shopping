@@ -110,6 +110,9 @@
     },
     "add_dinner_calendar_failed": {
       "message": "Couldn't add {title} to {entity_id} ({error}). It's saved in the ICA dinner calendar, so don't add it again — add the event by hand."
+    },
+    "dinner_too_old": {
+      "message": "Dinners older than {days} days aren't kept, so one on {date} can't be added."
     }
   },
   "services": {

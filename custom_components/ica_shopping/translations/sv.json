@@ -110,6 +110,9 @@
     },
     "add_dinner_calendar_failed": {
       "message": "Det gick inte att lägga till {title} i {entity_id} ({error}). Middagen är sparad i ICA:s middagskalender, så lägg inte till den igen – lägg till händelsen för hand."
+    },
+    "dinner_too_old": {
+      "message": "Middagar äldre än {days} dagar sparas inte, så en middag den {date} kan inte läggas till."
     }
   },
   "services": {

@@ -113,6 +113,13 @@ def recipe_url(recipe: dict) -> str | None:
     return f"{RECIPE_WEB_BASE}/recept/{slug}-{recipe_id}/"
 
 
+def entry_description(entry: dict) -> str:
+    """A remembered dinner's calendar description."""
+    return format_description(
+        entry.get("cooking_time"), entry.get("url"), entry.get("ingredients"), note=entry.get("note")
+    )
+
+
 def event_description(recipe: dict) -> str:
     return format_description(recipe.get("cookingTime"), recipe_url(recipe), recipe_ingredients(recipe))
 
@@ -167,7 +174,6 @@ async def async_fetch_recipes(
     avoid = {str(i) for i in (avoid_ids or ())}
     if recipe_ids:
         # Committing a plan the caller already picked: fetch exactly those recipes.
-        # Custom dinners have no ICA recipe to fetch.
         picked = [r for r in dict.fromkeys(str(r) for r in recipe_ids) if not is_custom_id(r)]
         return [r for r in [await api.async_get_recipe(i) for i in picked] if r]
 
@@ -226,13 +232,13 @@ async def async_plan_dinners(
     add_to_list=False also leaves the list untouched, for callers that shop elsewhere.
     """
     recipes = await async_fetch_recipes(api, count, source, recipe_ids, avoid_ids)
-    if not recipes:
-        raise NoRecipesError(f"No {source} recipes returned")
-
     skip_names = {norm(n) for n in never_add}
+    only_custom = bool(recipe_ids) and all(is_custom_id(r) for r in recipe_ids)
+    if not recipes and not only_custom:
+        raise NoRecipesError(f"No {source} recipes returned")
     planned = [ing for ing in aggregate_ingredients(recipes) if norm(ing["name"]) not in skip_names]
 
-    if preview or not add_to_list:
+    if preview or not add_to_list or not recipes:
         return None, recipes, {
             "list": None,
             "preview": preview,

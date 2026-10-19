@@ -207,7 +207,7 @@ Only committed plans are remembered — `preview: true` never touches the memory
 
 ### Your own dinners
 
-`ica_shopping.add_dinner` saves a dinner that isn't an ICA recipe — leftovers, takeaway, mormors kålpudding. It goes on the given `date` in the Dinners calendar and the **Default calendar**, with the `note` and `url` in the event description, and responds with `{"id": "custom-1a2b3c4d", "title": …, "date": …}`. A day that already has a dinner is refused, as with `plan_dinners`.
+`ica_shopping.add_dinner` saves a dinner that isn't an ICA recipe — leftovers, takeaway, mormors kålpudding. It goes on the given `date` in the Dinners calendar and the **Default calendar**, with the `note` and `url` in the event description, and responds with `{"id": "custom-1a2b3c4d", "title": …, "date": …}`. A day that already has a dinner is refused, as with `plan_dinners`. So is a day more than 120 days back, since the memory doesn't keep dinners that old.
 
 Your own dinners have ids starting with `custom-` and are marked `"custom": true` in `get_memory`. They don't count for `avoid_days`, are skipped if passed to `plan_dinners`' `recipes`, and can be moved, renamed or deleted in the Dinners calendar or with `forget_dinner` like any other dinner.
 

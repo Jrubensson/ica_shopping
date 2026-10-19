@@ -40,14 +40,14 @@ from .const import (
     MAX_ICA_ITEMS,
 )
 from .ica_api import ICAApi, IcaAuthError, IcaError, format_offer, list_matches, parse_bonus
-from .memory import DayTakenError, DinnerMemory
+from .memory import HISTORY_MAX_AGE_DAYS, DayTakenError, DinnerMemory, DinnerTooOldError
 from .recipes import (
     SOURCE_FAVORITES,
     SOURCE_RANDOM,
     NoRecipesError,
     async_plan_dinners,
+    entry_description,
     event_description,
-    format_description,
     norm as _norm,
     search_summary,
 )
@@ -659,12 +659,18 @@ async def async_setup(hass, config):
                 translation_key="dinner_day_taken",
                 translation_placeholders={"date": str(err)},
             ) from err
+        except DinnerTooOldError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="dinner_too_old",
+                translation_placeholders={"date": str(err), "days": str(HISTORY_MAX_AGE_DAYS)},
+            ) from err
         if calendar:
             try:
                 await hass.services.async_call("calendar", "create_event", {
                     "entity_id": calendar,
                     "summary": title,
-                    "description": format_description(None, url, None, note=note),
+                    "description": entry_description(entry),
                     "start_date": day,
                     "end_date": day + dt.timedelta(days=1),
                 }, blocking=True)
@@ -721,7 +727,7 @@ async def async_setup(hass, config):
         "add_dinner",
         handle_add_dinner,
         schema=vol.Schema({
-            vol.Required("title"): cv.string,
+            vol.Required("title"): vol.All(cv.string, vol.Strip, vol.Length(min=1)),
             vol.Required("date"): cv.date,
             vol.Optional("note"): cv.string,
             vol.Optional("url"): cv.string,

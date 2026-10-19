@@ -220,7 +220,7 @@ class AddDinnerTool(_ServiceTool):
     )
     service = "add_dinner"
     annotations = _annotations(
-        read_only=False, destructive=False, idempotent=False, open_world=False
+        read_only=False, destructive=False, idempotent=False, open_world=True
     )
     parameters = _Schema(
         {
