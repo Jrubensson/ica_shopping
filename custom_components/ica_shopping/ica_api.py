@@ -229,7 +229,12 @@ async def _read_json(resp: aiohttp.ClientResponse, label: str) -> Any:
             raise IcaConnectionError(f"{label}: HTTP {resp.status}: {body}")
         raise IcaApiError(f"{label}: HTTP {resp.status}: {body}")
     body = await resp.text()
-    return json.loads(body) if body.strip() else None
+    if not body.strip():
+        return None
+    try:
+        return json.loads(body)
+    except ValueError as err:
+        raise IcaApiError(f"{label}: response is not JSON") from err
 
 
 class ICAApi:
@@ -405,7 +410,7 @@ class ICAApi:
 
     async def _get_public_token(self, force_refresh: bool = False) -> str:
         cached = self._public_token
-        # The token lives about 5 minutes and ica.se may hand out one with little time left.
+        # The token's lifetime varies and ica.se may hand out one with little time left.
         if not force_refresh and cached and cached[1] > time.time() + PUBLIC_TOKEN_MARGIN_SECONDS:
             return cached[0]
         session = async_get_clientsession(self.hass)

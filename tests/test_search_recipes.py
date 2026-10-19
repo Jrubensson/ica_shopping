@@ -61,6 +61,14 @@ async def test_search_refreshes_a_rejected_token(hass, aioclient_mock):
     assert [c[3]["Authorization"] for c in search_calls] == ["Bearer stale", "Bearer fresh"]
 
 
+async def test_search_rejects_a_token_page_that_is_not_json(hass, aioclient_mock):
+    aioclient_mock.get(PUBLIC_TOKEN_URL, text="<html>", status=200)
+    api = ICAApi(hass, "199001011234", "pw")
+
+    with pytest.raises(IcaApiError, match="not JSON"):
+        await api.async_search_recipes("lasagne")
+
+
 async def _setup(hass, api):
     hass.data[DOMAIN] = {"memory": MagicMock(), "current_list_id": "list", DATA_ICA: api}
     await async_setup(hass, {})
