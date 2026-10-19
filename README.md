@@ -220,17 +220,19 @@ An ingredient whose only row on the list is checked off is unchecked instead of 
 The integration remembers what you have eaten and what you prefer, so `plan_dinners` can avoid repeats and an assistant can answer questions about past dinners. It is kept in Home Assistant's `.storage`, is included in backups, and survives restarts.
 
 - **History** — every dinner `plan_dinners` adds is recorded automatically on the day it is planned for (recipe id, title, date, list, cooking time, link), trimmed to the last 300 dinners / 120 days. Planned dinners count as eaten for `avoid_days`.
-- **Preferences** — free-text rules such as `Oskar: ingen fisk` or `Vardagar: vegetariskt`.
+- **Preferences** — free-text rules such as `Vardagar: vegetariskt`, for the assistant to follow.
+- **Food rules** — ingredients the household avoids, which `plan_dinners` applies by itself. See [Food rules](#food-rules).
+- **Your own versions** — how the household changes an ICA recipe. See [Your own version of a recipe](#your-own-version-of-a-recipe).
 - **`avoid_days`** — set it on `plan_dinners` to skip recipes eaten recently; `14` is a good default for a weekly plan. It works for both `random` and `favorites` (`favorites` is filtered on the known recipe ids).
 
 | Action | |
 |---|---|
-| `ica_shopping.get_memory` | Returns `{history: […], preferences: […]}` |
+| `ica_shopping.get_memory` | Returns `{history: […], preferences: […], food_rules: […], variants: {…}}` |
 | `ica_shopping.set_preference` | Remember a rule (`text`) |
 | `ica_shopping.remove_preference` | Forget a rule (matched on the text) |
 | `ica_shopping.add_dinner` | Save a dinner of your own (`title`, `date`, optional `note` and `url`) |
 | `ica_shopping.forget_dinner` | Remove a dinner by recipe id/title (`recipe`) and/or `date` |
-| `ica_shopping.clear_memory` | Empty the history and/or preferences (`history`, `preferences` booleans) |
+| `ica_shopping.clear_memory` | Empty the history and/or preferences (`history`, `preferences` booleans); `preferences` also clears the food rules and your own versions |
 
 Use `forget_dinner` to correct a wrong entry (say you cooked something else) and `clear_memory` to start over. `forget_dinner` matches the recipe id exactly or as part of the title, and can be narrowed to one date.
 
@@ -243,6 +245,59 @@ Use `forget_dinner` to correct a wrong entry (say you cooked something else) and
 ```
 
 Only committed plans are remembered — `preview: true` never touches the memory.
+
+### Food rules
+
+A food rule is an ingredient the household avoids, at one of two levels:
+
+| Level | `plan_dinners` suggestions | In the dinners that are planned |
+|---|---|---|
+| `omit` (Hellre utan) | Passes by dishes **built around** it: Löksås och fläsk for `lök`, a räkpasta or skagenröra for `räkor` | Left out, and kept off the shopping list: a köttfärssås is planned without its onion |
+| `never` (Aldrig) | Passes by **every** recipe that has it | Left out, should it be in a dish you asked for |
+
+A dish is built around an ingredient when its title names it, or when ICA tags the recipe with it as its protein or kind of dish (`"Protein": "Räkor"`). ICA's vegetable tags don't count, since richly tagged recipes list nearly every vegetable in them. The tags come from the recipe's ica.se page, and are only read when the title doesn't settle it.
+
+**A dish you ask for is always planned.** When `recipes` names it, the rules never pass it by. A rule the dish is built around is kept for that dinner (the räkor stay in the räkpasta you asked for, listed in `keep`), and the rest are left out as usual. The response lists those dishes in `rule_conflicts` (`id`, `title`, `ingredient`, `level`).
+
+Swedish compound words need care, so a rule has `terms`, the word stems that count, and `except`, words that contain one but are something else:
+
+```yaml
+- action: ica_shopping.set_food_rule
+  data:
+    ingredient: lök
+    level: omit
+    terms: lök            # gul lök, rödlök, gula lökar, hackad lök …
+    except: vitlök, gräslök, purjolök
+```
+
+`terms` default to the ingredient without a plural ending (`räkor` → `räk`, which also finds räkpasta). Give them when the plural changes the word: `morot` needs `morot, morött`. `remove_food_rule` (`ingredient`) forgets a rule.
+
+Ingredients that hold a dish together are better as a free-text preference. Egg in pancake batter can't be left out the way onion in a sauce can, so `Frun: gillar inte ägg` lets the assistant judge each dish instead.
+
+Each planned dinner in the response carries `omitted` (lines left out) and `extra` (lines your own version adds). The full recipe is kept, so the Dinners calendar shows the changes under the ingredients, worked out from the rules as they are now. A rule added later shows on dinners already planned:
+
+```text
+• 500 g köttfärs
+• 1 gul lök
+• 2 morötter
+
+Utan: 1 gul lök (lök)
+Utan: 2 morötter (morot)
+Lägg till: 1 tsk chili
+Vår version
+```
+
+### Your own version of a recipe
+
+`ica_shopping.set_recipe_variant` saves how the household cooks an ICA recipe: `omit`, ingredient lines to leave out exactly as the recipe writes them, and `add`, lines to add (lists, or one line per line). There's also an optional `note`. It replaces the earlier version, and is applied whenever the recipe is planned: the left-out lines stay off the shopping list, and the added ones go on it. `remove_recipe_variant` (`recipe`) goes back to ICA's recipe.
+
+```yaml
+- action: ica_shopping.set_recipe_variant
+  data:
+    recipe: "720707"
+    add:
+      - 1 tsk chiliflakes
+```
 
 ### Your own dinners
 
@@ -315,10 +370,12 @@ On Home Assistant 2026.8 and newer the integration contributes its own tools to 
 | `ica_shopping__PlanDinners` | Suggest a menu from ICA recipes. `preview: true` returns it without changing the list; commit with `recipes` set to the ids you agreed on, optionally from a `start_date`. Committed dinners go in the Dinners calendar and the **Default calendar** |
 | `ica_shopping__SearchRecipes` | Search ICA's recipes, e.g. when the user asks for a specific dish |
 | `ica_shopping__AddDinner` | Save a dinner of the user's own, without an ICA recipe |
-| `ica_shopping__SetPreference` / `RemovePreference` | Remember or drop a food preference |
+| `ica_shopping__SetFoodRule` / `RemoveFoodRule` | Remember or drop an ingredient to avoid |
+| `ica_shopping__SetRecipeVariant` / `RemoveRecipeVariant` | Remember or drop the household's own version of a recipe |
+| `ica_shopping__SetPreference` / `RemovePreference` | Remember or drop a food preference that isn't about one ingredient |
 | `ica_shopping__ForgetDinner` / `ClearMemory` | Correct the dinner memory |
 
-They wrap the actions above, so they follow the same rules, and they ship with a short prompt fragment that tells the model to read the offers and the memory before suggesting meals and never to add anything before the user agrees. The tools are only offered when an assistant requests the built-in Assist API; on Home Assistant older than 2026.8 they are simply not registered and the actions keep working.
+They wrap the actions above, so they follow the same rules, and they ship with a short prompt fragment that tells the model to read the offers and the memory before suggesting meals, to plan a dish the user names ("vi äter köttfärssås ikväll") without letting the food rules stop it or commenting on them, and never to add anything before the user agrees. The tools are only offered when an assistant requests the built-in Assist API; on Home Assistant older than 2026.8 they are simply not registered and the actions keep working.
 
 ## Bonus and Offers Sensors
 

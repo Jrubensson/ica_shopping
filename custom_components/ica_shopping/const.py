@@ -42,6 +42,8 @@ GLOBAL_SEARCH_URL = "https://apim-pub.gw.ica.se/sverige/digx/globalsearch/v1"
 STORE_SEARCH_URL = "https://apim-pub.gw.ica.se/sverige/digx/storesearch/v1"
 PUBLIC_TOKEN_URL = "https://www.ica.se/e11/public-access-token"
 RECIPE_IMAGE_BASE = "https://assets.icanet.se"
+# Public recipe pages; their page data has the tags planning uses to tell what a dish is built around.
+RECIPE_WEB_URL = "https://www.ica.se/recept"
 
 USER_AGENT = (
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) "

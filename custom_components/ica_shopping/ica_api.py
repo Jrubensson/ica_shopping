@@ -41,6 +41,7 @@ from .const import (
     GLOBAL_SEARCH_URL,
     PUBLIC_TOKEN_URL,
     RECIPE_SEARCH_URL,
+    RECIPE_WEB_URL,
     STORE_SEARCH_URL,
     REDIRECT_URI,
     REGISTER_ENDPOINT,
@@ -271,6 +272,8 @@ class ICAApi:
         self._lock = asyncio.Lock()
         self._public_token: tuple[str, float] | None = None
         self._product_cache: dict[tuple[str, str, int], tuple[float, list[dict]]] = {}
+        # A recipe's tags don't change; kept for the session, by recipe id
+        self._category_cache: dict[str, list[dict]] = {}
 
     @property
     def auth_state(self) -> dict:
@@ -506,6 +509,43 @@ class ICAApi:
     async def async_get_favorite_recipe_ids(self) -> list:
         data = await self._request("GET", f"{RECIPE_PATH}/favorites") or {}
         return [f["recipeId"] for f in data.get("favorites", []) if isinstance(f, dict) and f.get("recipeId")]
+
+    async def async_get_recipe_categories(self, recipe: dict) -> list[dict]:
+        """ICA's tags for a recipe, as [{"name": "Protein", "value": "Räkor"}, …].
+
+        Taken from the recipe when it carries them, otherwise from its public ica.se page, which
+        has them in its page data. [] when neither has any; the caller then has only the title.
+        """
+        tags = recipe.get("categories")
+        if isinstance(tags, list) and tags and all(isinstance(t, dict) and "value" in t for t in tags):
+            return tags
+        recipe_id = str(recipe.get("id") or "")
+        if not recipe_id.isdigit():
+            return []
+        if recipe_id in self._category_cache:
+            return self._category_cache[recipe_id]
+        session = async_get_clientsession(self.hass)
+        try:
+            # ica.se redirects /recept/<id>/ to the page with the title in its URL.
+            async with session.get(
+                f"{RECIPE_WEB_URL}/{recipe_id}/", headers={"User-Agent": USER_AGENT}, timeout=TIMEOUT
+            ) as resp:
+                if resp.status != 200:
+                    # Not cached: the next plan tries again
+                    _LOGGER.debug("ica.se answered %s for the tags of recipe %s", resp.status, recipe_id)
+                    return []
+                page = await resp.text()
+        except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+            _LOGGER.debug("Could not read the tags of recipe %s: %s", recipe_id, err)
+            return []
+        match = re.search(r'"categories":(\[[^\]]*\])', page)
+        try:
+            tags = json.loads(match.group(1)) if match else []
+        except ValueError:
+            tags = []
+        tags = [t for t in tags if isinstance(t, dict) and t.get("value")]
+        self._category_cache[recipe_id] = tags
+        return tags
 
     async def async_add_favorite_recipe(self, recipe_id) -> None:
         """Save a recipe as a favourite, as the heart in the ICA app does."""

@@ -55,10 +55,10 @@ from .recipes import (
     NoRecipesError,
     async_plan_dinners,
     entry_description,
-    event_description,
     norm as _norm,
     search_summary,
 )
+from .rules import LEVEL_OMIT, LEVELS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -442,6 +442,20 @@ async def async_setup(hass, config):
         ids = [str(p).strip() for p in parts if str(p).strip()]
         return ids or None
 
+    def _words(value) -> list[str] | None:
+        """A list of words, or a comma-separated string of them."""
+        if not value:
+            return None
+        parts = value.split(",") if isinstance(value, str) else value
+        return [str(p).strip() for p in parts if str(p).strip()] or None
+
+    def _lines(value) -> list[str]:
+        """Ingredient lines, as a list or one per line (they can hold commas themselves)."""
+        if not value:
+            return []
+        parts = value.splitlines() if isinstance(value, str) else value
+        return [str(p).strip() for p in parts if str(p).strip()]
+
     def _sync_or_raise():
         sync = hass.data.get(DOMAIN, {}).get("sync")
         if sync is None:
@@ -638,6 +652,8 @@ async def async_setup(hass, config):
                 store_account=store_account,
                 # Not held across sync() below, which takes the same lock.
                 list_lock=data.setdefault("sync_lock", asyncio.Lock()),
+                rules=memory.food_rules if memory is not None else (),
+                variants=memory.variants if memory is not None else None,
             )
         except NoRecipesError as err:
             raise HomeAssistantError(
@@ -687,7 +703,11 @@ async def async_setup(hass, config):
                     await hass.services.async_call("calendar", "create_event", {
                         "entity_id": calendar,
                         "summary": dinner["title"] or "Middag",
-                        "description": event_description(recipe),
+                        "description": entry_description(
+                            dinner,
+                            memory.food_rules if memory is not None else (),
+                            memory.variants if memory is not None else None,
+                        ),
                         "start_date": day,
                         "end_date": day + dt.timedelta(days=1),
                     }, blocking=True)
@@ -778,6 +798,36 @@ async def async_setup(hass, config):
                 ) from err
         return {"id": entry["id"], "title": entry["title"], "date": entry["date"]}
 
+    async def handle_set_food_rule(call: ServiceCall) -> ServiceResponse:
+        memory = _memory_or_raise()
+        rule = await memory.async_set_food_rule(
+            call.data["ingredient"],
+            call.data["level"],
+            _words(call.data.get("terms")),
+            _words(call.data.get("except")),
+        )
+        return {"rule": rule, "food_rules": memory.as_dict()["food_rules"]}
+
+    async def handle_remove_food_rule(call: ServiceCall) -> ServiceResponse:
+        memory = _memory_or_raise()
+        removed = await memory.async_remove_food_rule(call.data["ingredient"])
+        return {"removed": removed, "food_rules": memory.as_dict()["food_rules"]}
+
+    async def handle_set_recipe_variant(call: ServiceCall) -> ServiceResponse:
+        memory = _memory_or_raise()
+        variant = await memory.async_set_variant(
+            call.data["recipe"],
+            omit=_lines(call.data.get("omit")),
+            add=_lines(call.data.get("add")),
+            note=call.data.get("note"),
+            title=call.data.get("title"),
+        )
+        return {"recipe": call.data["recipe"], "variant": variant}
+
+    async def handle_remove_recipe_variant(call: ServiceCall) -> ServiceResponse:
+        memory = _memory_or_raise()
+        return {"removed": await memory.async_remove_variant(call.data["recipe"])}
+
     async def handle_clear_memory(call: ServiceCall) -> ServiceResponse:
         memory = _memory_or_raise()
         removed = await memory.async_clear(
@@ -826,6 +876,49 @@ async def async_setup(hass, config):
             vol.Optional("note"): cv.string,
             vol.Optional("url"): cv.string,
         }),
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        "set_food_rule",
+        handle_set_food_rule,
+        schema=vol.Schema({
+            vol.Required("ingredient"): vol.All(cv.string, vol.Strip, vol.Length(min=1)),
+            vol.Optional("level", default=LEVEL_OMIT): vol.In(LEVELS),
+            # Words that count, and words that contain one but are something else ("vitlök")
+            vol.Optional("terms"): vol.Any(cv.string, [cv.string]),
+            vol.Optional("except"): vol.Any(cv.string, [cv.string]),
+        }),
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        "remove_food_rule",
+        handle_remove_food_rule,
+        schema=vol.Schema({vol.Required("ingredient"): cv.string}),
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    # Only ICA recipes have a version of their own; your own dinners are yours already.
+    recipe_id_schema = vol.All(vol.Coerce(str), vol.Match(r"^\d+$"))
+    hass.services.async_register(
+        DOMAIN,
+        "set_recipe_variant",
+        handle_set_recipe_variant,
+        schema=vol.Schema({
+            vol.Required("recipe"): recipe_id_schema,
+            # Ingredient lines, as a list or one per line; lines can hold commas ("2 morötter, rivna")
+            vol.Optional("omit"): vol.Any(cv.string, [cv.string]),
+            vol.Optional("add"): vol.Any(cv.string, [cv.string]),
+            vol.Optional("note"): cv.string,
+            vol.Optional("title"): cv.string,
+        }),
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        "remove_recipe_variant",
+        handle_remove_recipe_variant,
+        schema=vol.Schema({vol.Required("recipe"): recipe_id_schema}),
         supports_response=SupportsResponse.OPTIONAL,
     )
     hass.services.async_register(

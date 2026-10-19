@@ -54,11 +54,16 @@ def _split_uid(uid: str) -> tuple[str, str]:
     return recipe_id, date
 
 
-def _to_event(entry: dict) -> CalendarEvent | None:
+def _to_event(entry: dict, memory: DinnerMemory | None = None) -> CalendarEvent | None:
     day = parse_date(entry.get("date"))
     if day is None:
         return None
-    description = entry_description(entry)
+    # With the food rules as they are now, so a new rule shows on dinners already planned
+    description = (
+        entry_description(entry, memory.food_rules, memory.variants)
+        if memory is not None
+        else entry_description(entry)
+    )
     return CalendarEvent(
         start=day,
         end=day + dt.timedelta(days=1),
@@ -87,7 +92,7 @@ class DinnerCalendar(CalendarEntity):
         self.async_on_remove(self._memory.async_add_listener(self.async_write_ha_state))
 
     def _events(self) -> list[CalendarEvent]:
-        events = [e for entry in self._memory.history if (e := _to_event(entry))]
+        events = [e for entry in self._memory.history if (e := _to_event(entry, self._memory))]
         return sorted(events, key=lambda e: e.start)
 
     @property
@@ -125,7 +130,7 @@ class DinnerCalendar(CalendarEntity):
         if entry is None:
             raise _not_found(uid)
         start, end = event.get(EVENT_START), event.get(EVENT_END)
-        current = _to_event(entry)
+        current = _to_event(entry, self._memory)
         description = event.get(EVENT_DESCRIPTION)
         if (
             isinstance(start, dt.datetime)

@@ -58,22 +58,29 @@ def _annotations(**kwargs: bool) -> Any:
 
 PROMPT = """ICA Shopping gives you the household's grocery list, the offers at the favourite ICA store, and a dinner memory.
 - GetOffers: what is on offer this week (name, brand, deal) and the bonus balance. Treat it as a hint, not a shopping constraint - and remember many offers are not food (cleaning, flowers, drinks).
-- GetMemory: the dinners eaten recently and the saved food preferences. Read it before suggesting meals.
+- GetMemory: the dinners eaten recently, the saved preferences, the food rules and the household's own versions of recipes. Read it before suggesting meals.
 - PlanDinners: returns real ICA recipes with their ingredients and the merged shopping list. Call it with preview=true to get suggestions; commit with preview=false and the recipe ids you agreed on. Committed dinners land on the next free days from start_date (default tomorrow) in the dinner calendar; days that already have a dinner are skipped, and the result gives each dinner's date. Recipes eaten within avoid_days are skipped automatically. Set add_to_list=false when committing if the user only wants the dinners planned, not added to the shopping list; they still go in the memory and calendar. A preview, or a commit with add_to_list=false, also returns ingredient_groups: one entry per ingredient with the total amount (text), the original lines and the dinners that use it. With match_products=true, amounts like '3 dl grädde', '2 msk tomatpuré' or '1 gul lök' become an ICA product and package count on the list, and the result's products lists each swap, so a preview shows what will be added; products marked pantry (spices, stock, oil, flour, sugar) are things most kitchens already have, so point them out; they are still added, and any the user already has can be removed from the list afterwards; pass match_products=true again when committing. products_skipped "no_store" means no favourite store is set in the ICA app; "store_lookup_failed" means ICA couldn't be reached for the store, so try again later. Either way nothing was matched.
 - SearchRecipes: search ICA's recipes by name or ingredient. Use it when the user asks for a specific dish; plan a result by passing its id in PlanDinners' recipes.
 - AddDinner: save a dinner that is not an ICA recipe (leftovers, takeaway, a family recipe) on a given date. Days that already have a dinner are refused.
-- SetPreference / RemovePreference: save or drop a preference such as "no fish".
+- SetFoodRule / RemoveFoodRule: an ingredient the household avoids. Level "omit" (the default, "hellre utan"): PlanDinners passes by dishes built around it (Löksås och fläsk for lök, a räkpasta for räkor) and leaves it out of the rest, also off the shopping list. Level "never" ("aldrig", for allergies or "inte ens lite"): PlanDinners passes by every recipe that has it. Swedish compound words need care: give terms for the forms that count (lök: "lök"; räkor: "räk"; morot: "morot", "morött") and except for words that contain a term but are something else (lök: "vitlök", "gräslök", "purjolök").
+- SetRecipeVariant / RemoveRecipeVariant: the household's own version of an ICA recipe - ingredient lines it leaves out and lines it adds ("vi brukar ha morötter i köttfärssåsen"). Applied every time that recipe is planned. Recipe ids are in GetMemory's history.
+- SetPreference / RemovePreference: save or drop a preference that is not about one ingredient, such as "vegetariskt på vardagar".
 - ForgetDinner / ClearMemory: correct the dinner memory.
 
+When the user says what they are eating or will eat ("vi äter köttfärssås och spaghetti ikväll", "lägg in tacos på fredag"):
+- Plan exactly that dish: SearchRecipes for it, take the result that best matches what they said, and commit it with PlanDinners (recipes=<its id>, start_date=<that day>, add_to_list=false unless they ask for the ingredients). If no ICA recipe fits, use AddDinner with their words as the title.
+- Food rules never stop a dish the user names; planning adapts it on its own (the onion is left out of the köttfärssås). Do not mention the rules or say the dish is "utan lök". Only if rule_conflicts lists a rule with level "never" may you note it in one short sentence.
+- Confirm briefly, e.g. "Klart, köttfärssås med spaghetti ikväll."
+
 When asked what to eat:
-1. Read GetMemory and GetOffers first, and apply the saved preferences silently - pick dishes that respect them without listing the preferences or saying a dish is "utan lök", "utan räkor" or similar. Mention a preference only when the user asks about it, or when you could not avoid one.
+1. Read GetMemory and GetOffers first. PlanDinners applies the food rules and the household's own recipe versions by itself, so do not filter its dishes by them, list them, or say a dish is "utan lök", "utan räkor" or similar. Apply the free-text preferences silently in the same way, and mention one only when the user asks about it, or when you could not avoid it.
 2. Build the menu from the recipes PlanDinners returns. Present those dishes (shortening a title is fine); do not invent dishes of your own or rename them into something else.
 3. Treat the offers as a bonus, not a requirement. A dish does not have to use an offer, and it is normal to serve it with whatever it is usually eaten with - kassler with rice or potatoes, pasta with a sauce - even when that side is not on offer. Mention an offer only when a recipe really uses it.
 4. Never pad a dish or a plate with unrelated offers, and never stack several offers onto one meal. Plain, recognisable home cooking beats a clever combination of whatever happens to be cheap.
 5. Never suggest something the memory says was eaten recently, and never add anything to the list until the user agrees.
 6. The memory also holds dinners planned ahead. Each evening gets at most one dinner: when committing, days that are taken are skipped, so tell the user the dates from the result rather than assuming consecutive days.
 
-When the user states a preference, save it with SetPreference."""
+When the user says they don't eat or don't like an ingredient, save it with SetFoodRule (level "omit" unless they say never, or it is an allergy). Use SetPreference for other preferences. When they say how they usually change a recipe, save it with SetRecipeVariant."""
 
 
 async def _call(hass: HomeAssistant, service: str, data: dict[str, Any]) -> dict[str, Any]:
@@ -120,8 +127,9 @@ class GetMemoryTool(_ServiceTool):
     name = "ica_shopping__GetMemory"
     title = "Get dinner memory"
     description = (
-        "The dinners the household has eaten recently and the saved food preferences. Read it "
-        "before suggesting meals, and never suggest a dinner it lists as recently eaten."
+        "The dinners the household has eaten recently (with their recipe ids), the saved "
+        "preferences, the food rules and the household's own versions of recipes. Read it before "
+        "suggesting meals, and never suggest a dinner it lists as recently eaten."
     )
     service = "get_memory"
 
@@ -239,12 +247,94 @@ class AddDinnerTool(_ServiceTool):
     )
 
 
+class SetFoodRuleTool(_ServiceTool):
+    name = "ica_shopping__SetFoodRule"
+    title = "Remember an ingredient to avoid"
+    description = (
+        "Remember an ingredient the household avoids. Level 'omit' (default): dishes built around "
+        "it are passed by and it is left out of the rest. Level 'never': every recipe with it is "
+        "passed by. Replaces an earlier rule for the same ingredient."
+    )
+    service = "set_food_rule"
+    annotations = _annotations(
+        read_only=False, destructive=False, idempotent=True, open_world=False
+    )
+    parameters = _Schema(
+        {
+            _Required("ingredient", description="The ingredient, in Swedish, e.g. 'lök'."): str,
+            _Optional("level", description="'omit' (default) or 'never'."): str,
+            _Optional(
+                "terms",
+                description=(
+                    "Word stems that count as the ingredient in ingredient lines and titles, e.g. "
+                    "['räk'] for räkor or ['morot', 'morött'] for morot. Defaults to the ingredient."
+                ),
+            ): [str],
+            _Optional(
+                "except",
+                description=(
+                    "Words that contain a term but are something else, e.g. ['vitlök', 'gräslök', "
+                    "'purjolök'] for lök."
+                ),
+            ): [str],
+        }
+    )
+
+
+class RemoveFoodRuleTool(_ServiceTool):
+    name = "ica_shopping__RemoveFoodRule"
+    title = "Forget an ingredient to avoid"
+    description = "Remove the food rule for an ingredient."
+    service = "remove_food_rule"
+    annotations = _annotations(
+        read_only=False, destructive=True, idempotent=True, open_world=False
+    )
+    parameters = _Schema(
+        {_Required("ingredient", description="The ingredient of the rule to remove."): str}
+    )
+
+
+class SetRecipeVariantTool(_ServiceTool):
+    name = "ica_shopping__SetRecipeVariant"
+    title = "Save the household's version of a recipe"
+    description = (
+        "Save how the household cooks an ICA recipe: ingredient lines it leaves out and lines it "
+        "adds. Applied whenever the recipe is planned, shown in the calendar, and kept off or put "
+        "on the shopping list. Replaces the earlier version of that recipe."
+    )
+    service = "set_recipe_variant"
+    annotations = _annotations(
+        read_only=False, destructive=False, idempotent=True, open_world=False
+    )
+    parameters = _Schema(
+        {
+            _Required("recipe", description="The ICA recipe id."): str,
+            _Optional(
+                "omit", description="Ingredient lines to leave out, exactly as in the recipe."
+            ): [str],
+            _Optional("add", description="Lines to add, e.g. '2 morötter, rivna'."): [str],
+            _Optional("note", description="A short note, e.g. 'dubbel sats'."): str,
+        }
+    )
+
+
+class RemoveRecipeVariantTool(_ServiceTool):
+    name = "ica_shopping__RemoveRecipeVariant"
+    title = "Forget the household's version of a recipe"
+    description = "Go back to ICA's own recipe."
+    service = "remove_recipe_variant"
+    annotations = _annotations(
+        read_only=False, destructive=True, idempotent=True, open_world=False
+    )
+    parameters = _Schema({_Required("recipe", description="The ICA recipe id."): str})
+
+
 class SetPreferenceTool(_ServiceTool):
     name = "ica_shopping__SetPreference"
     title = "Remember a food preference"
     description = (
-        "Remember a food preference for the household, for example 'no fish' or 'vegetarian on "
-        "weekdays'. Use it when the user says what they like or dislike."
+        "Remember a food preference for the household that is not about one ingredient, for "
+        "example 'vegetarian on weekdays'. For an ingredient to avoid, use SetFoodRule."
     )
     service = "set_preference"
     annotations = _annotations(
@@ -320,6 +410,10 @@ TOOLS: list[Tool] = [
     PlanDinnersTool(),
     SearchRecipesTool(),
     AddDinnerTool(),
+    SetFoodRuleTool(),
+    RemoveFoodRuleTool(),
+    SetRecipeVariantTool(),
+    RemoveRecipeVariantTool(),
     SetPreferenceTool(),
     RemovePreferenceTool(),
     ForgetDinnerTool(),

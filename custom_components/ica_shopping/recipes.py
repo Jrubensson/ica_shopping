@@ -12,6 +12,7 @@ from .const import MAX_ICA_ITEMS, RECIPE_IMAGE_BASE
 from .ica_api import ICAApi, IcaApiError, IcaError, list_matches
 from .memory import is_custom_id
 from .products import async_match_products
+from .rules import LEVEL_NEVER, adjust, fold, is_theme, mentions, touched_rules
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -135,21 +136,39 @@ def recipe_url(recipe: dict) -> str | None:
     return f"{RECIPE_WEB_BASE}/recept/{slug}-{recipe_id}/"
 
 
-def entry_description(entry: dict) -> str:
-    """A remembered dinner's calendar description."""
+def entry_description(entry: dict, rules: Iterable[dict] = (), variants: dict | None = None) -> str:
+    """A remembered dinner's calendar description, with what the food rules and the household's
+    own version of the recipe leave out and add. Worked out from the rules as they are now, so a
+    new rule shows up on dinners that are already planned."""
+    ingredients = entry.get("ingredients") or []
+    variant = (variants or {}).get(str(entry.get("id")))
+    omitted, extra = adjust(ingredients, rules, variant, entry.get("keep") or ())
     return format_description(
-        entry.get("cooking_time"), entry.get("url"), entry.get("ingredients"), note=entry.get("note")
+        entry.get("cooking_time"),
+        entry.get("url"),
+        ingredients,
+        note=entry.get("note"),
+        omitted=omitted,
+        extra=extra,
+        variant=variant,
     )
 
 
-def event_description(recipe: dict) -> str:
-    return format_description(recipe.get("cookingTime"), recipe_url(recipe), recipe_ingredients(recipe))
-
-
-def format_description(cooking_time, url, ingredients, note=None) -> str:
+def format_description(
+    cooking_time, url, ingredients, note=None, omitted=(), extra=(), variant=None
+) -> str:
+    """The note, cooking time and link; the ingredients as "• 2 dl grädde"; then one line per
+    change: "Utan: 1 gul lök (lök)" (the rule in brackets, none for the household's own
+    version), "Lägg till: 2 morötter", and "Vår version[: note]" when there is one."""
     parts = [str(p) for p in (note, cooking_time, url) if p]
     lines = [f"• {line}" for line in ingredients or [] if line]
-    return "\n\n".join(p for p in ("\n".join(parts), "\n".join(lines)) if p)
+    changes = [
+        f"Utan: {o['line']} ({o['rule']})" if o.get("rule") else f"Utan: {o['line']}" for o in omitted
+    ]
+    changes += [f"Lägg till: {line}" for line in extra]
+    if variant:
+        changes.append(f"Vår version: {variant['note']}" if variant.get("note") else "Vår version")
+    return "\n\n".join(p for p in ("\n".join(parts), "\n".join(lines), "\n".join(changes)) if p)
 
 
 def recipe_ingredients(recipe: dict) -> list[str]:
@@ -161,14 +180,61 @@ def recipe_ingredients(recipe: dict) -> list[str]:
     ]
 
 
-def dinner_summary(recipe: dict) -> dict:
-    return {
+def dinner_summary(recipe: dict, adjusted: dict | None = None) -> dict:
+    """The dinner as the response and the memory see it. `adjusted` adds what the food rules
+    leave out ("omitted" lines), what the household's own version adds ("extra"), and the rules
+    the user overrode by asking for the dish ("keep")."""
+    summary = {
         "id": recipe.get("id"),
         "title": recipe.get("title"),
         "cooking_time": recipe.get("cookingTime"),
         "url": recipe_url(recipe),
         "ingredients": recipe_ingredients(recipe),
     }
+    if adjusted and adjusted["omitted"]:
+        summary["omitted"] = [o["line"] for o in adjusted["omitted"]]
+    if adjusted and adjusted["extra"]:
+        summary["extra"] = adjusted["extra"]
+    if adjusted and adjusted["keep"]:
+        summary["keep"] = adjusted["keep"]
+    return summary
+
+
+def _without(recipe: dict, omitted: list[dict], extra: list[str]) -> dict:
+    """The recipe as it will be cooked, for the shopping list: omitted lines out, extras in."""
+    if not omitted and not extra:
+        return recipe
+    left_out = {fold(o["line"]) for o in omitted}
+    groups = [
+        {**grp, "ingredients": [
+            ing for ing in grp.get("ingredients") or []
+            if not isinstance(ing, dict) or fold(ing.get("text")) not in left_out
+        ]}
+        for grp in recipe.get("ingredientGroups") or []
+    ]
+    if extra:
+        groups.append({"ingredients": [{"ingredient": line, "text": line} for line in extra]})
+    return {**recipe, "ingredientGroups": groups}
+
+
+async def _async_theme_rules(api: ICAApi, recipe: dict, rules: list[dict]) -> list[dict]:
+    """Of `rules` (all in the dish), the ones it is built around. Only fetches ICA's tags when
+    the title doesn't settle it."""
+    themed = [r for r in rules if mentions(r, recipe.get("title"))]
+    rest = [r for r in rules if r not in themed]
+    if rest:
+        tags = await api.async_get_recipe_categories(recipe)
+        themed += [r for r in rest if is_theme(r, recipe.get("title"), tags)]
+    return themed
+
+
+async def _async_blocked(api: ICAApi, recipe: dict, rules: list[dict]) -> bool:
+    """Whether planning should pass the recipe by: it has a never-ingredient, or it is built
+    around an ingredient the household would rather be without."""
+    touched = touched_rules(rules, recipe.get("title"), recipe_ingredients(recipe))
+    if any(r["level"] == LEVEL_NEVER for r in touched):
+        return True
+    return bool(touched) and bool(await _async_theme_rules(api, recipe, touched))
 
 
 def search_summary(result: dict) -> dict:
@@ -192,8 +258,12 @@ async def async_fetch_recipes(
     source: str,
     recipe_ids: list | None = None,
     avoid_ids: Iterable | None = None,
+    rules: Iterable[dict] = (),
 ) -> list[dict]:
+    """The recipes to plan. Suggestions pass by recipes the food rules rule out; recipes the
+    caller picked are always fetched, since the user asked for them."""
     avoid = {str(i) for i in (avoid_ids or ())}
+    rules = list(rules)
     if recipe_ids:
         # Committing a plan the caller already picked: fetch exactly those recipes.
         picked = [r for r in dict.fromkeys(str(r) for r in recipe_ids) if not is_custom_id(r)]
@@ -205,18 +275,51 @@ async def async_fetch_recipes(
             for i in dict.fromkeys(await api.async_get_favorite_recipe_ids())
             if str(i) not in avoid
         ]
-        picked = random.sample(ids, min(count, len(ids)))
-        return [r for r in [await api.async_get_recipe(i) for i in picked] if r]
+        random.shuffle(ids)
+        picked: list[dict] = []
+        for recipe_id in ids:
+            if len(picked) >= count:
+                break
+            recipe = await api.async_get_recipe(recipe_id)
+            if recipe and not await _async_blocked(api, recipe, rules):
+                picked.append(recipe)
+        return picked
 
     recipes: dict = {}
-    # Random picks can repeat, and recently eaten ones are skipped, so allow extra calls.
-    for _ in range(count * 2 + len(avoid)):
+    # Random picks can repeat, and recently eaten or ruled-out ones are skipped, so allow extra calls.
+    for _ in range(count * (4 if rules else 2) + len(avoid)):
         if len(recipes) >= count:
             break
         recipe = await api.async_get_random_recipe()
-        if recipe and recipe.get("id") not in recipes and str(recipe.get("id")) not in avoid:
+        if (
+            recipe
+            and recipe.get("id") not in recipes
+            and str(recipe.get("id")) not in avoid
+            and not await _async_blocked(api, recipe, rules)
+        ):
             recipes[recipe.get("id")] = recipe
     return list(recipes.values())
+
+
+async def _async_adjust(
+    api: ICAApi, recipe: dict, rules: list[dict], variants: dict, picked: bool
+) -> dict:
+    """{omitted, extra, keep, conflicts} for one recipe. A picked recipe built around a rule's
+    ingredient keeps it (räkor in the räkpasta the user asked for); the rest is left out."""
+    lines = recipe_ingredients(recipe)
+    keep: list[str] = []
+    conflicts: list[dict] = []
+    if picked and (touched := touched_rules(rules, recipe.get("title"), lines)):
+        for rule in await _async_theme_rules(api, recipe, touched):
+            keep.append(rule["ingredient"])
+            conflicts.append({
+                "id": recipe.get("id"),
+                "title": recipe.get("title"),
+                "ingredient": rule["ingredient"],
+                "level": rule["level"],
+            })
+    omitted, extra = adjust(lines, rules, variants.get(str(recipe.get("id"))), keep)
+    return {"omitted": omitted, "extra": extra, "keep": keep, "conflicts": conflicts}
 
 
 async def async_resolve_or_create_list(api: ICAApi, ref: str | None, default_id: str) -> dict:
@@ -290,6 +393,8 @@ async def async_plan_dinners(
     match_products: bool = False,
     store_account: str | None = None,
     list_lock: asyncio.Lock | None = None,
+    rules: Iterable[dict] = (),
+    variants: dict | None = None,
 ) -> tuple[dict | None, list[dict], dict]:
     """Return (target list, recipes, service response).
 
@@ -299,18 +404,29 @@ async def async_plan_dinners(
     match_products=True swaps recipe amounts for an ICA product and package count
     where one fits at the store with `store_account` (none without one), listed in "products".
     Only the list update holds `list_lock`, so slow searches don't block the to-do sync.
+    `rules` (food rules) pass suggestions by and leave ingredients out; `variants` (the
+    household's own versions, by recipe id) leave out and add lines too. Each dinner then has
+    "omitted" and "extra", and "rule_conflicts" lists picked dishes built around a rule's ingredient.
     """
-    recipes = await async_fetch_recipes(api, count, source, recipe_ids, avoid_ids)
+    rules = list(rules)
+    recipes = await async_fetch_recipes(api, count, source, recipe_ids, avoid_ids, rules)
     skip_names = {norm(n) for n in never_add}
     only_custom = bool(recipe_ids) and all(is_custom_id(r) for r in recipe_ids)
     if not recipes and not only_custom:
         raise NoRecipesError(f"No {source} recipes returned")
-    planned = [ing for ing in aggregate_ingredients(recipes) if norm(ing["name"]) not in skip_names]
+    adjusted = [await _async_adjust(api, r, rules, variants or {}, bool(recipe_ids)) for r in recipes]
+    dinners = [dinner_summary(r, a) for r, a in zip(recipes, adjusted)]
+    conflicts = [c for a in adjusted for c in a["conflicts"]]
+    if conflicts:
+        _LOGGER.debug("🍽️ Valda rätter som bygger på en undvikt ingrediens: %s", conflicts)
+    # The recipes as they will be cooked, so left-out ingredients stay off the list
+    cooked = [_without(r, a["omitted"], a["extra"]) for r, a in zip(recipes, adjusted)]
+    planned = [ing for ing in aggregate_ingredients(cooked) if norm(ing["name"]) not in skip_names]
     extra: dict = {}
     if match_products:
         # Without the store, ICA's all-store search is too noisy to pick products from.
         products = [] if not store_account else await async_match_products(
-            api, summed_ingredients(recipes, skip_names), store_account
+            api, summed_ingredients(cooked, skip_names), store_account
         )
         if not store_account:
             extra["products_skipped"] = "no_store"
@@ -318,13 +434,16 @@ async def async_plan_dinners(
         planned = [{**ing, "text": swaps.get(norm(ing["name"]), ing["text"])} for ing in planned]
         extra["products"] = products
 
+    if conflicts:
+        extra["rule_conflicts"] = conflicts
+
     if preview or not add_to_list or not recipes:
         return None, recipes, {
             "list": None,
             "preview": preview,
-            "dinners": [dinner_summary(r) for r in recipes],
+            "dinners": dinners,
             "ingredients": [ing["text"] for ing in planned],
-            "ingredient_groups": group_ingredients(recipes, skip_names),
+            "ingredient_groups": group_ingredients(cooked, skip_names),
             "added": [],
             "skipped_list_full": [],
             **extra,
@@ -336,7 +455,7 @@ async def async_plan_dinners(
     return target, recipes, {
         "list": target.get("name"),
         "preview": False,
-        "dinners": [dinner_summary(r) for r in recipes],
+        "dinners": dinners,
         "ingredients": [ing["text"] for ing in planned],
         "added": added,
         "skipped_list_full": skipped,

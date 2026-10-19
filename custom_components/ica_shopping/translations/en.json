@@ -229,6 +229,74 @@
         }
       }
     },
+    "set_food_rule": {
+      "name": "Set food rule",
+      "description": "Remembers an ingredient the household avoids. Omit: dishes built around it are passed by, and it is left out of the rest. Never: every recipe with it is passed by.",
+      "fields": {
+        "ingredient": {
+          "name": "Ingredient",
+          "description": "The ingredient, e.g. 'lök'."
+        },
+        "level": {
+          "name": "Level",
+          "description": "Omit (Hellre utan) or Never (Aldrig)."
+        },
+        "terms": {
+          "name": "Terms",
+          "description": "Word stems that count as the ingredient, comma-separated. Defaults to the ingredient."
+        },
+        "except": {
+          "name": "Except",
+          "description": "Words that contain a term but are something else, comma-separated, e.g. 'vitlök, gräslök'."
+        }
+      }
+    },
+    "remove_food_rule": {
+      "name": "Remove food rule",
+      "description": "Forgets the food rule for an ingredient.",
+      "fields": {
+        "ingredient": {
+          "name": "Ingredient",
+          "description": "The ingredient of the rule."
+        }
+      }
+    },
+    "set_recipe_variant": {
+      "name": "Set recipe version",
+      "description": "Saves the household's own version of an ICA recipe: ingredient lines it leaves out and lines it adds. Applied whenever the recipe is planned.",
+      "fields": {
+        "recipe": {
+          "name": "Recipe",
+          "description": "The ICA recipe id."
+        },
+        "omit": {
+          "name": "Leave out",
+          "description": "Ingredient lines to leave out, one per line."
+        },
+        "add": {
+          "name": "Add",
+          "description": "Lines to add, one per line."
+        },
+        "note": {
+          "name": "Note",
+          "description": "A short note."
+        },
+        "title": {
+          "name": "Title",
+          "description": "The recipe's title, when it isn't in the dinner memory."
+        }
+      }
+    },
+    "remove_recipe_variant": {
+      "name": "Remove recipe version",
+      "description": "Goes back to ICA's own recipe.",
+      "fields": {
+        "recipe": {
+          "name": "Recipe",
+          "description": "The ICA recipe id."
+        }
+      }
+    },
     "clear_memory": {
       "name": "Clear the dinner memory",
       "description": "Empty the dinner memory (history and/or preferences).",
@@ -295,6 +363,12 @@
       "options": {
         "random": "Random",
         "favorites": "Favorites"
+      }
+    },
+    "food_rule_level": {
+      "options": {
+        "omit": "Omit",
+        "never": "Never"
       }
     }
   },

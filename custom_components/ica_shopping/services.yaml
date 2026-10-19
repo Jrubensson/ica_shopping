@@ -181,6 +181,85 @@ forget_dinner:
       selector:
         text:
 
+set_food_rule:
+  description: "Remember an ingredient to avoid. omit: dishes built around it are passed by, and it is left out of the rest. never: every recipe with it is passed by."
+  fields:
+    ingredient:
+      description: "The ingredient"
+      example: "lök"
+      required: true
+      selector:
+        text:
+    level:
+      description: "omit (Hellre utan) or never (Aldrig)"
+      default: omit
+      selector:
+        select:
+          options:
+            - omit
+            - never
+          translation_key: food_rule_level
+    terms:
+      description: "Word stems that count, comma-separated (default: the ingredient)"
+      example: "räk"
+      selector:
+        text:
+    except:
+      description: "Words that contain a term but are something else, comma-separated"
+      example: "vitlök, gräslök, purjolök"
+      selector:
+        text:
+
+remove_food_rule:
+  description: "Forget the food rule for an ingredient"
+  fields:
+    ingredient:
+      description: "The ingredient"
+      example: "lök"
+      required: true
+      selector:
+        text:
+
+set_recipe_variant:
+  description: "Save the household's own version of an ICA recipe: lines it leaves out and lines it adds"
+  fields:
+    recipe:
+      description: "ICA recipe id"
+      example: "720707"
+      required: true
+      selector:
+        text:
+    omit:
+      description: "Ingredient lines to leave out, one per line"
+      example: "1 gul lök"
+      selector:
+        text:
+          multiline: true
+    add:
+      description: "Lines to add, one per line"
+      example: "2 morötter, rivna"
+      selector:
+        text:
+          multiline: true
+    note:
+      description: "A short note"
+      selector:
+        text:
+    title:
+      description: "The recipe's title, when it isn't in the dinner memory"
+      selector:
+        text:
+
+remove_recipe_variant:
+  description: "Go back to ICA's own recipe"
+  fields:
+    recipe:
+      description: "ICA recipe id"
+      example: "720707"
+      required: true
+      selector:
+        text:
+
 clear_memory:
   description: "Empty the dinner memory (history and/or preferences)"
   fields:

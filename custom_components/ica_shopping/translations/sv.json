@@ -229,6 +229,74 @@
         }
       }
     },
+    "set_food_rule": {
+      "name": "Spara matregel",
+      "description": "Kommer ihåg en ingrediens hushållet undviker. Hellre utan: rätter som bygger på den hoppas över, och i övriga lämnas den bort. Aldrig: alla recept med den hoppas över.",
+      "fields": {
+        "ingredient": {
+          "name": "Ingrediens",
+          "description": "Ingrediensen, t.ex. 'lök'."
+        },
+        "level": {
+          "name": "Nivå",
+          "description": "Hellre utan eller Aldrig."
+        },
+        "terms": {
+          "name": "Ord",
+          "description": "Ordstammar som räknas som ingrediensen, kommaseparerade. Standard är ingrediensen."
+        },
+        "except": {
+          "name": "Utom",
+          "description": "Ord som innehåller ett av orden men är något annat, kommaseparerade, t.ex. 'vitlök, gräslök'."
+        }
+      }
+    },
+    "remove_food_rule": {
+      "name": "Ta bort matregel",
+      "description": "Glömmer matregeln för en ingrediens.",
+      "fields": {
+        "ingredient": {
+          "name": "Ingrediens",
+          "description": "Regelns ingrediens."
+        }
+      }
+    },
+    "set_recipe_variant": {
+      "name": "Spara vår version",
+      "description": "Sparar hushållets egen version av ett ICA-recept: ingrediensrader som lämnas bort och rader som läggs till. Används varje gång receptet planeras.",
+      "fields": {
+        "recipe": {
+          "name": "Recept",
+          "description": "ICA-receptets id."
+        },
+        "omit": {
+          "name": "Utan",
+          "description": "Ingrediensrader att lämna bort, en per rad."
+        },
+        "add": {
+          "name": "Lägg till",
+          "description": "Rader att lägga till, en per rad."
+        },
+        "note": {
+          "name": "Anteckning",
+          "description": "En kort anteckning."
+        },
+        "title": {
+          "name": "Titel",
+          "description": "Receptets titel, om den inte finns i middagsminnet."
+        }
+      }
+    },
+    "remove_recipe_variant": {
+      "name": "Ta bort vår version",
+      "description": "Går tillbaka till ICA:s eget recept.",
+      "fields": {
+        "recipe": {
+          "name": "Recept",
+          "description": "ICA-receptets id."
+        }
+      }
+    },
     "clear_memory": {
       "name": "Rensa middagsminnet",
       "description": "Töm middagsminnet (historik och/eller preferenser).",
@@ -295,6 +363,12 @@
       "options": {
         "random": "Slumpade",
         "favorites": "Favoriter"
+      }
+    },
+    "food_rule_level": {
+      "options": {
+        "omit": "Hellre utan",
+        "never": "Aldrig"
       }
     }
   },

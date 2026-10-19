@@ -16,6 +16,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
+from .rules import LEVEL_OMIT, fold, make_rule
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -41,13 +42,17 @@ class DinnerTooOldError(Exception):
 
 
 class DinnerMemory:
-    """Dinner history and free-text preferences, persisted between runs."""
+    """Dinner history, preferences and food rules, persisted between runs."""
 
     def __init__(self, hass: HomeAssistant) -> None:
         self._hass = hass
         self._store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
         self.history: list[dict] = []
         self.preferences: list[str] = []
+        # Ingredients the household avoids (see rules.py)
+        self.food_rules: list[dict] = []
+        # The household's own versions of ICA recipes, by recipe id: {title, omit, add, note}
+        self.variants: dict[str, dict] = {}
         self._listeners: list[Callable[[], None]] = []
 
     @callback
@@ -68,6 +73,14 @@ class DinnerMemory:
             for p in data.get("preferences", [])
             if isinstance(p, str) and p.strip()
         ]
+        self.food_rules = [
+            make_rule(r["ingredient"], r.get("level", LEVEL_OMIT), r.get("terms"), r.get("except"))
+            for r in data.get("food_rules", [])
+            if isinstance(r, dict) and r.get("ingredient")
+        ]
+        self.variants = {
+            str(k): v for k, v in (data.get("variants") or {}).items() if isinstance(v, dict)
+        }
         _LOGGER.debug(
             "🍽️ Middagsminne laddat: %d middagar, %d preferenser",
             len(self.history),
@@ -76,9 +89,12 @@ class DinnerMemory:
         return self
 
     async def _async_save(self) -> None:
-        await self._store.async_save(
-            {"history": self.history, "preferences": self.preferences}
-        )
+        await self._store.async_save({
+            "history": self.history,
+            "preferences": self.preferences,
+            "food_rules": self.food_rules,
+            "variants": self.variants,
+        })
         for update_callback in list(self._listeners):
             update_callback()
 
@@ -127,6 +143,8 @@ class DinnerMemory:
                     "url": dinner.get("url"),
                     "cooking_time": dinner.get("cooking_time"),
                     "ingredients": dinner.get("ingredients") or [],
+                    # Rules the user overrode by asking for this dish (räkor in a räkpasta)
+                    **({"keep": dinner["keep"]} if dinner.get("keep") else {}),
                 }
             )
             known.add(key)
@@ -195,6 +213,61 @@ class DinnerMemory:
         if removed:
             await self._async_save()
         return removed
+
+    async def async_set_food_rule(
+        self,
+        ingredient: str,
+        level: str = LEVEL_OMIT,
+        terms: list[str] | None = None,
+        excepts: list[str] | None = None,
+    ) -> dict:
+        """Add a rule, or replace the one for the same ingredient."""
+        rule = make_rule(ingredient, level, terms, excepts)
+        key = fold(rule["ingredient"])
+        self.food_rules = [r for r in self.food_rules if fold(r["ingredient"]) != key] + [rule]
+        await self._async_save()
+        return rule
+
+    async def async_remove_food_rule(self, ingredient: str) -> int:
+        key = fold(ingredient)
+        before = len(self.food_rules)
+        self.food_rules = [r for r in self.food_rules if fold(r["ingredient"]) != key]
+        removed = before - len(self.food_rules)
+        if removed:
+            await self._async_save()
+        return removed
+
+    def variant(self, recipe_id) -> dict | None:
+        return self.variants.get(str(recipe_id))
+
+    async def async_set_variant(
+        self,
+        recipe_id: str,
+        *,
+        omit: list[str] | None = None,
+        add: list[str] | None = None,
+        note: str | None = None,
+        title: str | None = None,
+    ) -> dict | None:
+        """Save the household's own version of an ICA recipe; an empty one removes it."""
+        recipe_id = str(recipe_id)
+        omit = [line.strip() for line in omit or [] if line and line.strip()]
+        add = [line.strip() for line in add or [] if line and line.strip()]
+        note = (note or "").strip() or None
+        if not omit and not add and not note:
+            await self.async_remove_variant(recipe_id)
+            return None
+        known = next((e.get("title") for e in self.history if str(e.get("id")) == recipe_id), None)
+        variant = {"title": title or known, "omit": omit, "add": add, "note": note}
+        self.variants[recipe_id] = variant
+        await self._async_save()
+        return variant
+
+    async def async_remove_variant(self, recipe_id: str) -> bool:
+        if self.variants.pop(str(recipe_id), None) is None:
+            return False
+        await self._async_save()
+        return True
 
     async def async_forget_dinner(
         self, recipe: str | None = None, date: str | None = None
@@ -284,14 +357,17 @@ class DinnerMemory:
     async def async_clear(
         self, history: bool = True, preferences: bool = True
     ) -> dict:
-        """Empty the history and/or the preferences; returns what was removed."""
+        """Empty the history and/or the preferences (with the food rules and the household's
+        own recipe versions); returns what was removed."""
         removed = {"history": 0, "preferences": 0}
         if history:
             removed["history"] = len(self.history)
             self.history = []
         if preferences:
-            removed["preferences"] = len(self.preferences)
+            removed["preferences"] = len(self.preferences) + len(self.food_rules) + len(self.variants)
             self.preferences = []
+            self.food_rules = []
+            self.variants = {}
         if history or preferences:
             await self._async_save()
         return removed
@@ -302,6 +378,8 @@ class DinnerMemory:
         return {
             "history": sorted(history, key=lambda e: e.get("date") or "", reverse=True),
             "preferences": list(self.preferences),
+            "food_rules": [dict(r) for r in self.food_rules],
+            "variants": {k: dict(v) for k, v in self.variants.items()},
         }
 
 
