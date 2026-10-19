@@ -59,7 +59,7 @@ def _annotations(**kwargs: bool) -> Any:
 PROMPT = """ICA Shopping gives you the household's grocery list, the offers at the favourite ICA store, and a dinner memory.
 - GetOffers: what is on offer this week (name, brand, deal) and the bonus balance. Treat it as a hint, not a shopping constraint - and remember many offers are not food (cleaning, flowers, drinks).
 - GetMemory: the dinners eaten recently and the saved food preferences. Read it before suggesting meals.
-- PlanDinners: returns real ICA recipes with their ingredients and the merged shopping list. Call it with preview=true to get suggestions; commit with preview=false and the recipe ids you agreed on. Committed dinners land on the next free days from start_date (default tomorrow) in the dinner calendar; days that already have a dinner are skipped, and the result gives each dinner's date. Recipes eaten within avoid_days are skipped automatically.
+- PlanDinners: returns real ICA recipes with their ingredients and the merged shopping list. Call it with preview=true to get suggestions; commit with preview=false and the recipe ids you agreed on. Committed dinners land on the next free days from start_date (default tomorrow) in the dinner calendar; days that already have a dinner are skipped, and the result gives each dinner's date. Recipes eaten within avoid_days are skipped automatically. Set add_to_list=false when committing if the user only wants the dinners planned, not added to the shopping list; they still go in the memory and calendar. A preview, or a commit with add_to_list=false, also returns ingredient_groups: one entry per ingredient with the total amount (text), the original lines and the dinners that use it.
 - SetPreference / RemovePreference: save or drop a preference such as "no fish".
 - ForgetDinner / ClearMemory: correct the dinner memory.
 
@@ -131,7 +131,8 @@ class PlanDinnersTool(_ServiceTool):
         "Returns real ICA recipes with their ingredients, and merges them into a shopping list. "
         "With preview=true it returns a menu without changing the list - use that to suggest and "
         "refine. Once the user agrees, call it again with preview=false and recipes set to the "
-        "ids you agreed on, which adds exactly that menu. Present the recipes it returns as the "
+        "ids you agreed on, which adds exactly that menu. Add add_to_list=false to plan the dinners "
+        "without adding anything to the list. Present the recipes it returns as the "
         "suggestions; do not invent dishes. Dinners eaten within avoid_days are skipped."
     )
     service = "plan_dinners"
@@ -152,6 +153,13 @@ class PlanDinnersTool(_ServiceTool):
                 description=(
                     "true returns the menu without changing the list (default). false commits "
                     "the menu, together with 'recipes'."
+                ),
+            ): bool,
+            _Optional(
+                "add_to_list",
+                description=(
+                    "false commits the dinners to the memory and calendar without adding the "
+                    "ingredients to the shopping list. Defaults to true."
                 ),
             ): bool,
             _Optional(
