@@ -295,7 +295,7 @@ async def async_plan_dinners(
     merged ingredients, so a caller can show a suggestion before committing it.
     add_to_list=False also leaves the list untouched, for callers that shop elsewhere.
     match_products=True swaps volume and weight amounts for an ICA product and package count
-    where one fits, searched at the store with `store_account`, and lists the swaps in "products".
+    where one fits at the store with `store_account` (none without one), listed in "products".
     Only the list update holds `list_lock`, so slow searches don't block the to-do sync.
     """
     recipes = await async_fetch_recipes(api, count, source, recipe_ids, avoid_ids)
@@ -306,7 +306,8 @@ async def async_plan_dinners(
     planned = [ing for ing in aggregate_ingredients(recipes) if norm(ing["name"]) not in skip_names]
     extra: dict = {}
     if match_products:
-        products = await async_match_products(
+        # Without the store, ICA's all-store search is too noisy to pick products from.
+        products = [] if not store_account else await async_match_products(
             api, summed_ingredients(recipes, skip_names), store_account
         )
         swaps = {norm(p["ingredient"]): p["text"] for p in products}

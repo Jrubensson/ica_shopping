@@ -15,17 +15,25 @@ _LOGGER = logging.getLogger(__name__)
 VOLUME_ML = {"ml": 1, "cl": 10, "dl": 100, "l": 1000}
 WEIGHT_G = {"g": 1, "hg": 100, "kg": 1000}
 MAX_PACKAGES = 6
+# More than 3× the amount and over 500 g/ml left: a 5 kg sack is not what 300 g of onion means.
+MAX_LEFTOVER_RATIO = 3
+MAX_LEFTOVER = 500
+# Packages up to 1.5× the amount count as a good fit; beyond that ICA's ranking only breaks ties.
+GOOD_FIT_RATIO = 1.5
 SEARCH_LIMIT = 10
-PARALLEL_SEARCHES = 4
+# ICA answers 429 to bursts of searches.
+PARALLEL_SEARCHES = 2
+MATCH_TIMEOUT_SECONDS = 30
 
 # "5dl", "2,5 dl", "4x125g"; the last size in a product name is its package size.
 _SIZE = re.compile(r"(?:(\d+)\s*[x×]\s*)?(\d+(?:[.,]\d+)?)\s*(ml|cl|dl|l|g|hg|kg)\b", re.I)
 # "Lök gul ca 180g" is a loose item weighed at the till, not a package.
 _APPROXIMATE = re.compile(r"\bca\.?\s*\d", re.I)
-# ICA ranks these variants high; they are only picked when the recipe asks for them.
+# Variants (in the name or ICA category) are only picked when the recipe asks for them.
 VARIANT_WORDS = (
-    "laktosfri", "låglaktos", "syrad", "ekologisk", "krav", "vegan", "glutenfri", "smaksatt", "lätt",
-    "tryffel", "hållbarhet",
+    "laktosfri", "låglaktos", "syrad", "ekologisk", "krav", "eco", "vegan", "glutenfri",
+    "smaksatt", "lätt", "tryffel", "hållbarhet", "fryst", "rökt", "alkoholfri",
+    "mousserande", "gravad", "i lake", "marinerad", "chili", "vitlök", "citron", "örter",
 )
 
 
@@ -62,10 +70,7 @@ def _words(text: str) -> list[str]:
 
 
 def _relevant(name: str, words: list[str]) -> bool:
-    """ICA names start with what the product is ('Smör 82% 500g'), so the first word must
-    start with one of the query's words and every query word must start a word in the name.
-    That rejects 'Kokosmjölk' for mjölk and 'Mikropopcorn Med Smör' for smör.
-    """
+    """ICA names start with what the product is, which rules out 'Kokosmjölk' for mjölk."""
     tokens = name.lower().split()
     return bool(tokens) and any(tokens[0].startswith(w) for w in words) and all(
         any(t.startswith(w) for t in tokens) for w in words
@@ -77,39 +82,56 @@ def _category(product: dict) -> str | None:
     return level2[0] if level2 else None
 
 
+def _described(product: dict) -> str:
+    return " ".join([
+        product.get("displayName") or "",
+        *(product.get("ecomCategoryNameLevel2") or []),
+        *(product.get("ecomCategoryNameLevel3") or []),
+    ]).lower()
+
+
+def _is_variant(product: dict, query: str) -> bool:
+    described = _described(product)
+    return any(v in described and v not in query for v in VARIANT_WORDS)
+
+
+def _is_canned(product: dict) -> bool:
+    return "konserv" in _described(product)
+
+
 def choose_product(
     query: str, dimension: str, needed: float, products: list[dict]
 ) -> tuple[dict, int] | None:
-    """The product and count that cover `needed` with the fewest packages, then the least
-    left over, then ICA's ranking.
-
-    Only relevant products in the category most of them share, sized in the same
-    dimension and not a variant the query didn't ask for, count.
-    """
+    """Fewest packages, then a good fit, then ICA's ranking, among relevant non-variant
+    products in the category most of them share."""
     words = _words(query)
-    query_lower = query.lower()
     if not words or needed <= 0:
         return None
-    relevant = [(rank, p) for rank, p in enumerate(products) if _relevant(p.get("displayName") or "", words)]
+    query = query.lower()
+    # Variants go before the vote, or seven tins of champinjoner outvote the fresh ones.
+    relevant = [
+        (rank, p) for rank, p in enumerate(products)
+        if _relevant(p.get("displayName") or "", words) and not _is_variant(p, query)
+    ]
+    # Tins only count when nothing fresh fits, since krossade tomater only come in tins.
+    if "konserv" not in query and any(not _is_canned(p) for _, p in relevant):
+        relevant = [(rank, p) for rank, p in relevant if not _is_canned(p)]
     categories = Counter(c for _, p in relevant if (c := _category(p)))
     if categories:
-        # Ties go to the category of ICA's best-ranked hit.
         top = max(categories.values())
         majority = next(_category(p) for _, p in relevant if categories.get(_category(p)) == top)
-        relevant = [(rank, p) for rank, p in relevant if _category(p) in (majority, None)]
+        relevant = [(rank, p) for rank, p in relevant if _category(p) == majority]
     best = None
     for rank, product in relevant:
-        name = product.get("displayName") or ""
-        size = package_size(name)
+        size = package_size(product.get("displayName") or "")
         if size is None or size[0] != dimension or size[1] <= 0:
             continue
         count = max(1, math.ceil(round(needed / size[1], 6)))
-        if count > MAX_PACKAGES:
+        leftover = count * size[1] - needed
+        if count > MAX_PACKAGES or (leftover > MAX_LEFTOVER and count * size[1] > MAX_LEFTOVER_RATIO * needed):
             continue
-        described = " ".join([name, *(product.get("ecomCategoryNameLevel3") or [])]).lower()
-        if any(v in described and v not in query_lower for v in VARIANT_WORDS):
-            continue
-        key = (count, count * size[1] - needed, rank)
+        # Ranking beats an exact fit, or small speciality packs win on leftover alone.
+        key = (count, count * size[1] > GOOD_FIT_RATIO * needed, rank)
         if best is None or key < best[0]:
             best = (key, product, count)
     return (best[1], best[2]) if best else None
@@ -122,10 +144,7 @@ def product_text(name: str, count: int) -> str:
 async def async_match_products(
     api: ICAApi, wanted: list[dict], account_number: str | None
 ) -> list[dict]:
-    """Match each {name, text, quantity, unit} to a product; unmatched ones are left out.
-
-    A failed search only leaves that ingredient as plain text.
-    """
+    """Match each {name, text, quantity, unit} to a product; unmatched ones are left out."""
     semaphore = asyncio.Semaphore(PARALLEL_SEARCHES)
 
     async def match(item: dict) -> dict | None:
@@ -155,7 +174,13 @@ async def async_match_products(
             "_needed": base[1],
         }
 
-    results = [r for r in await asyncio.gather(*(match(item) for item in wanted)) if r]
+    try:
+        async with asyncio.timeout(MATCH_TIMEOUT_SECONDS):
+            found = await asyncio.gather(*(match(item) for item in wanted))
+    except TimeoutError:
+        _LOGGER.warning("⚠️ ICA:s produktsökning svarade inte i tid – ingredienserna läggs till som text")
+        return []
+    results = [r for r in found if r]
     # '400 g gul lök' and '300 g lök' can land on the same bag; count packages for both together.
     by_product: dict[str, list[dict]] = {}
     for result in results:

@@ -111,7 +111,28 @@ def test_only_the_shared_category_counts():
     assert choose_product("smör", "weight", 50, products)[0]["displayName"] == "Smör 82% 500g Arla"
 
 
-def test_fewest_packages_then_least_left_over():
+def test_fresh_beats_canned_but_canned_still_fits_alone():
+    # Live at a Maxi: seven tins of champinjoner and one fresh pack.
+    tins = [_p(f"Champinjoner Skivade {g}g ICA", group="Grönsakskonserver") for g in (290, 180, 400)]
+    fresh = _p("Champinjoner 400g Klass 1 ICA", group="Svamp")
+    assert choose_product("champinjoner", "weight", 250, [*tins, fresh])[0] is fresh
+    crushed = _p("Tomater krossade 500g ICA Basic", group="Tomatkonserver")
+    assert choose_product("krossade tomater", "weight", 400, [crushed])[0] is crushed
+
+
+def test_huge_packages_and_uncategorised_products_never_fit():
+    products = [_p("Lök 5kg"), _p("Lök gul 5kg", group="Grönsaker")]
+    assert choose_product("lök", "weight", 300, products) is None
+
+
+def test_a_good_fit_beats_a_smaller_leftover_from_a_speciality_pack():
+    products = [_p("Olivolja 500ml Zeta", group="Olja"), _p("Olivolja Extra 250ml Kalas", group="Olja")]
+    assert choose_product("olivolja", "volume", 100, products)[0]["displayName"] == "Olivolja 500ml Zeta"
+    sizes = [_p("Nötfärs Färsk 12% 1kg ICA", group="Kött"), _p("Nötfärs Färsk 12% 500g ICA", group="Kött")]
+    assert choose_product("nötfärs", "weight", 500, sizes)[0]["displayName"] == "Nötfärs Färsk 12% 500g ICA"
+
+
+def test_fewest_packages_then_a_good_fit():
     products = [_p("Vispgrädde 36% 2,5dl ICA"), _p("Vispgrädde 36% 5dl ICA"), _p("Vispgrädde 36% 1l ICA")]
     assert choose_product("vispgrädde", "volume", 450, products) == (products[1], 1)
     assert choose_product("vispgrädde", "volume", 1800, products) == (products[2], 2)
@@ -214,9 +235,28 @@ async def test_commit_adds_the_product_rows():
         "custom_components.ica_shopping.recipes.async_resolve_or_create_list",
         AsyncMock(return_value={"id": "list", "name": "Handla", "rows": []}),
     ):
-        _, _, result = await _plan(api, match_products=True)
+        _, _, result = await _plan(api, match_products=True, store_account="1003380")
     assert result["added"] == ["Vispgrädde 36% 5dl Skånemejerier", "2 gula lökar"]
     assert [c.args[1] for c in api.add_to_list.await_args_list] == result["added"]
+
+
+async def test_without_a_store_nothing_is_searched():
+    api = _api()
+    _, _, result = await _plan(api, preview=True, match_products=True, store_account=None)
+    assert result["products"] == []
+    assert result["ingredients"] == ["4.5 dl vispgrädde", "2 gula lökar"]
+    api.async_search_products.assert_not_called()
+
+
+async def test_slow_searches_leave_plain_text():
+    async def hang(*args):
+        await asyncio.sleep(1)
+
+    api = MagicMock()
+    api.async_search_products = AsyncMock(side_effect=hang)
+    wanted = [{"name": "mjölk", "text": "1 l mjölk", "quantity": 1, "unit": "l"}]
+    with patch("custom_components.ica_shopping.products.MATCH_TIMEOUT_SECONDS", 0.01):
+        assert await async_match_products(api, wanted, "1003380") == []
 
 
 async def test_without_the_option_nothing_is_searched():
@@ -335,6 +375,6 @@ async def test_searches_run_outside_the_list_lock():
         "custom_components.ica_shopping.recipes.async_resolve_or_create_list",
         AsyncMock(return_value={"id": "list", "name": "Handla", "rows": []}),
     ):
-        await _plan(api, match_products=True, list_lock=lock)
+        await _plan(api, match_products=True, store_account="1003380", list_lock=lock)
 
     assert held == {"search": False, "add": True}
