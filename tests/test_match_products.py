@@ -705,3 +705,27 @@ def test_fold_keeps_swedish_letters_and_splits_ligatures():
     assert search_query("Crème fraîche") == "creme fraiche"
     assert search_query("ﬁkon") == "fikon"
     assert search_query("Ärtor") == "ärtor"
+
+
+@pytest.mark.parametrize(
+    ("wanted", "products", "text"),
+    [
+        (
+            [{"name": "krossade tomater", "text": "1 burk krossade tomater", "quantity": 1, "unit": "burk"},
+             {"name": "krossade tomater eller passerade tomater", "text": "1 burk krossade tomater eller passerade tomater", "quantity": 1, "unit": "burk"}],
+            [_p("Krossade tomater 400g ICA", group="Tomatkonserver", consumerItemId="1")],
+            "2 × Krossade tomater 400g ICA (1 burk krossade tomater + 1 burk krossade tomater eller passerade tomater)",
+        ),
+        (
+            [{"name": "spaghetti", "text": "400 g spaghetti", "quantity": 400, "unit": "g"},
+             {"name": "spaghetti eller linguine", "text": "4 port spaghetti eller linguine", "quantity": 4, "unit": "port"}],
+            [_p("Spaghetti 500g Zeta", group="Pasta, ris & mos", consumerItemId="2")],
+            "2 × Spaghetti 500g Zeta (400 g spaghetti + 4 port spaghetti eller linguine)",
+        ),
+    ],
+)
+async def test_packages_and_portions_on_one_product_are_added_up(wanted, products, text):
+    api = MagicMock()
+    api.async_search_products = AsyncMock(return_value=products)
+    results = await async_match_products(api, wanted, None)
+    assert {r["text"] for r in results} == {text}

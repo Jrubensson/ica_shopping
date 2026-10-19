@@ -356,8 +356,10 @@ async def async_match_products(
             "url": product.get("friendlyUrl"),
             "image": product.get("image"),
             "pantry": is_pantry(product),
-            "_needed": base[1] if base else None,
+            # Spoons and portions are already in ml or g, so they add up with weighed amounts.
+            "_needed": base[1] if base else small[1] if small[0] == "measure" else None,
             "_pieces": small[1] if small and small[0] == "piece" else None,
+            "_packages": count if small and small[0] == "package" else None,
         }
 
     tasks = [asyncio.create_task(match(item)) for item in wanted]
@@ -384,6 +386,8 @@ async def async_match_products(
             count = max(1, math.ceil(round(sum(r["_needed"] for r in shared) / size[1], 6)))
         elif pieces and all(r["_pieces"] is not None for r in shared):
             count = max(1, math.ceil(round(sum(r["_pieces"] for r in shared) / pieces, 6)))
+        elif all(r["_packages"] is not None for r in shared):
+            count = sum(r["_packages"] for r in shared)
         else:
             count = max(r["count"] for r in shared)
         needed = " + ".join(r["needed"] for r in shared)
@@ -391,5 +395,5 @@ async def async_match_products(
             result["count"] = count
             result["text"] = product_text(result["product"], count, needed)
     for result in results:
-        del result["_needed"], result["_pieces"]
+        del result["_needed"], result["_pieces"], result["_packages"]
     return results
