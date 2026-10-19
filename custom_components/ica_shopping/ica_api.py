@@ -54,6 +54,8 @@ _LOGGER = logging.getLogger(__name__)
 
 TIMEOUT = aiohttp.ClientTimeout(total=30)
 EARLY_REFRESH_SECONDS = 60
+# A preview and its commit then pick the same products, and ICA sees fewer searches.
+PRODUCT_CACHE_SECONDS = 30 * 60
 PUBLIC_TOKEN_MARGIN_SECONDS = 15
 
 
@@ -262,6 +264,7 @@ class ICAApi:
         self._on_auth_failed = on_auth_failed
         self._lock = asyncio.Lock()
         self._public_token: tuple[str, float] | None = None
+        self._product_cache: dict[tuple[str, str, int], tuple[float, list[dict]]] = {}
 
     @property
     def auth_state(self) -> dict:
@@ -516,6 +519,10 @@ class ICAApi:
         self, query: str, account_number: str | None = None, limit: int = 10
     ) -> list[dict]:
         """ica.se's product search, ranked by ICA; account_number narrows it to one store."""
+        key = (query.lower(), account_number or "0", limit)
+        cached = self._product_cache.get(key)
+        if cached and time.monotonic() - cached[0] < PRODUCT_CACHE_SECONDS:
+            return cached[1]
         data = await self._public_request(
             "POST",
             f"{GLOBAL_SEARCH_URL}/search/quicksearch",
@@ -528,7 +535,13 @@ class ICAApi:
             },
         )
         documents = ((data or {}).get("products") or {}).get("documents") if isinstance(data, dict) else None
-        return [d for d in documents or [] if isinstance(d, dict) and d.get("displayName")]
+        products = [d for d in documents or [] if isinstance(d, dict) and d.get("displayName")]
+        now = time.monotonic()
+        self._product_cache = {
+            k: v for k, v in self._product_cache.items() if now - v[0] < PRODUCT_CACHE_SECONDS
+        }
+        self._product_cache[key] = (now, products)
+        return products
 
     async def async_get_store_account_number(self, store_id: str) -> str | None:
         """The store's account number, which ica.se's searches use instead of its id."""

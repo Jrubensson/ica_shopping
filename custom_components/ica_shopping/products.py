@@ -92,7 +92,7 @@ def _described(product: dict) -> str:
 
 def _is_variant(product: dict, query: str) -> bool:
     described = _described(product)
-    return any(v in described and v not in query for v in VARIANT_WORDS)
+    return any(re.search(rf"\b{v}", described) and v not in query for v in VARIANT_WORDS)
 
 
 def _is_canned(product: dict) -> bool:
@@ -174,13 +174,17 @@ async def async_match_products(
             "_needed": base[1],
         }
 
-    try:
-        async with asyncio.timeout(MATCH_TIMEOUT_SECONDS):
-            found = await asyncio.gather(*(match(item) for item in wanted))
-    except TimeoutError:
-        _LOGGER.warning("⚠️ ICA:s produktsökning svarade inte i tid – ingredienserna läggs till som text")
+    tasks = [asyncio.create_task(match(item)) for item in wanted]
+    if not tasks:
         return []
-    results = [r for r in found if r]
+    done, pending = await asyncio.wait(tasks, timeout=MATCH_TIMEOUT_SECONDS)
+    if pending:
+        # Keep what was found; only the slow ingredients stay as text.
+        _LOGGER.warning("⚠️ ICA:s produktsökning svarade inte i tid för %d ingredienser", len(pending))
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+    results = [r for task in tasks if task in done and (r := task.result())]
     # '400 g gul lök' and '300 g lök' can land on the same bag; count packages for both together.
     by_product: dict[str, list[dict]] = {}
     for result in results:

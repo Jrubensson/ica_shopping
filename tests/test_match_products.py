@@ -248,15 +248,26 @@ async def test_without_a_store_nothing_is_searched():
     api.async_search_products.assert_not_called()
 
 
-async def test_slow_searches_leave_plain_text():
-    async def hang(*args):
-        await asyncio.sleep(1)
+async def test_a_slow_search_only_leaves_its_own_ingredient_as_text():
+    async def search(query, *args):
+        if query == "mjölk":
+            await asyncio.sleep(1)
+        return [_p("Vispgrädde 36% 5dl ICA")]
 
     api = MagicMock()
-    api.async_search_products = AsyncMock(side_effect=hang)
-    wanted = [{"name": "mjölk", "text": "1 l mjölk", "quantity": 1, "unit": "l"}]
-    with patch("custom_components.ica_shopping.products.MATCH_TIMEOUT_SECONDS", 0.01):
-        assert await async_match_products(api, wanted, "1003380") == []
+    api.async_search_products = AsyncMock(side_effect=search)
+    wanted = [
+        {"name": "mjölk", "text": "1 l mjölk", "quantity": 1, "unit": "l"},
+        {"name": "vispgrädde", "text": "4.5 dl vispgrädde", "quantity": 4.5, "unit": "dl"},
+    ]
+    with patch("custom_components.ica_shopping.products.MATCH_TIMEOUT_SECONDS", 0.05):
+        results = await async_match_products(api, wanted, "1003380")
+    assert [r["ingredient"] for r in results] == ["vispgrädde"]
+
+
+def test_variant_words_only_match_whole_word_starts():
+    products = [_p("Pecorino Romano 150g ICA", group="Ost")]
+    assert choose_product("pecorino", "weight", 30, products)[0] is products[0]
 
 
 async def test_without_the_option_nothing_is_searched():
@@ -285,6 +296,19 @@ async def test_product_search_request(hass, aioclient_mock):
         "queryString": "mjölk", "take": 5, "offset": 0,
         "accountNumber": "1003380", "searchDomain": "All",
     }
+
+
+async def test_product_searches_are_reused_for_the_commit(hass, aioclient_mock):
+    aioclient_mock.get(PUBLIC_TOKEN_URL, json=_token())
+    aioclient_mock.post(
+        f"{GLOBAL_SEARCH_URL}/search/quicksearch",
+        json={"products": {"documents": [_p("Mjölk 3% 1l ICA")]}},
+    )
+    api = ICAApi(hass, "199001011234", "pw")
+    await api.async_search_products("mjölk", "1003380")
+    await api.async_search_products("Mjölk", "1003380")
+    await api.async_search_products("mjölk", None)
+    assert len([c for c in aioclient_mock.mock_calls if c[0] == "POST"]) == 2
 
 
 async def test_store_account_lookup(hass, aioclient_mock):

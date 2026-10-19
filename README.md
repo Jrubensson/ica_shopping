@@ -172,9 +172,9 @@ How a product is picked:
 - Its size is in the same unit kind, and it isn't far bigger than needed: no 5 kg sack for 300 g.
 - Then the fewest packages, then a package close to the amount, then ICA's own ranking. When one package isn't enough the row says how many, e.g. `2 × Kycklingfilé Färsk Minutstrimlor 550g Kronfågel`. Ingredients that land on the same product are counted together.
 
-Ingredients counted in pieces (`2 gula lökar`), packages (`1 förp`) or spoons (`2 msk smör`), those with no fitting product, and everything when ICA's search is slow or the favourite store can't be found keep their recipe text.
+Ingredients counted in pieces (`2 gula lökar`), packages (`1 förp`) or spoons (`2 msk smör`), those with no fitting product, those whose search is slow, and everything when the favourite store can't be found keep their recipe text.
 
-The response gets a `products` list with each swap — `ingredient`, `needed` (the recipe amount), `product`, `count`, `text` (what goes on the list), `product_id`, `url` and `image` — so a preview shows exactly what will be added. Pass `match_products: true` again when you commit. `ingredient_groups` keeps the recipe amounts. The search uses ica.se's anonymous access, like `search_recipes`, and doesn't hold up the shopping-list sync while it runs.
+The response gets a `products` list with each swap — `ingredient`, `needed` (the recipe amount), `product`, `count`, `text` (what goes on the list), `product_id`, `url` and `image` — so a preview shows what will be added. Pass `match_products: true` again when you commit; search results are kept for 30 minutes, so the commit picks the same products as the preview. `ingredient_groups` keeps the recipe amounts. The search uses ica.se's anonymous access, like `search_recipes`, and doesn't hold up the shopping-list sync while it runs.
 
 ### Preview, then commit what you picked
 
