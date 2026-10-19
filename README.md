@@ -183,14 +183,14 @@ How a product is picked:
 
 Amounts the shop doesn't sell by get the smallest normal package of that product, never a catering pack over 2 kg:
 
-- Spoons, pinches and cloves (`msk`, `tsk`, `krm`, `nypa`, `klyfta`, `kvist`, …): one package, or more only when the amount needs it.
+- Spoons, pinches and cloves (`msk`, `tsk`, `krm`, `nypa`, `klyfta`, `kvist`, `blad`, …): one package, or more only when the amount needs it.
 - Portions (`port`) count as 100 g each, so `4 port spaghetti` is one 500 g pack and `8 port` one 1 kg pack, or two 500 g packs when that's all there is.
-- Pieces and cubes (`1 gurka`, `3 tärningar`): a pack that states how many it holds is counted against it (`3 tärningar` from a 6-pack is one pack); otherwise a loose item or the smallest bag, once, with the recipe amount in the text.
+- Pieces, slices and cubes (`1 gurka`, `4 bitar laxfilé`, `3 tärningar`): a pack that states how many it holds is preferred and counted against it (`3 tärningar` from a 6-pack is one pack, `4 rödlökar` two 2-packs); otherwise a loose item or the smallest bag, once, with the recipe amount in the text.
 - Packages (`2 förp`, `1 burk`): that many of the smallest package. A pot or bunch of herbs (`1 kruka basilika`) is never matched to a dried jar.
 
 Ingredients with an amount the matcher doesn't know (`1 sats`), those with no fitting product, those whose search is slow or keeps being rate-limited by ICA, and everything when the favourite store can't be found keep their recipe text. In that last case the response says why: `"products_skipped": "no_store"` when no favourite store is set in the ICA app, or `"store_lookup_failed"` when ICA couldn't be reached for it.
 
-The response gets a `products` list with each swap — `ingredient`, `needed` (the recipe amount), `product`, `count`, `text` (what goes on the list), `product_id`, `url`, `image` and `pantry` — so a preview shows what will be added. `pantry` is `true` for spices, dried herbs, stock, tomato purée, oil, flour, sugar and salt, which most kitchens already have, so a UI can leave them unticked; they are still added unless you leave them out or put them in the never-add list. Pass `match_products: true` again when you commit; search results are kept for 30 minutes, so the commit picks the same products as the preview. `ingredient_groups` keeps the recipe amounts. The search uses ica.se's anonymous access, like `search_recipes`, and doesn't hold up the shopping-list sync while it runs.
+The response gets a `products` list with each swap — `ingredient`, `needed` (the recipe amount), `product`, `count`, `text` (what goes on the list), `product_id`, `url`, `image` and `pantry` — so a preview shows what will be added. `pantry` is `true` for spices, dried herbs, stock, tomato purée, oil, flour, sugar and salt, which most kitchens already have, so a UI can leave them unticked; they are still added to the list, so remove the ones you have afterwards, or put staples you always have in the never-add list. Pass `match_products: true` again when you commit; search results are kept for 30 minutes, so the commit picks the same products as the preview. `ingredient_groups` keeps the recipe amounts. The search uses ica.se's anonymous access, like `search_recipes`, and doesn't hold up the shopping-list sync while it runs.
 
 ### Preview, then commit what you picked
 

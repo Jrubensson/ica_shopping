@@ -609,9 +609,8 @@ def test_pieces_of_produce():
         _p("Rödlök 500g Klass 1 ICA", "Rödlök", "Lök"),
     ]
     assert choose_package("rödlök", "piece", 1, red) == (red[1], 1)
-    # One bag beats two packs; with only the 2-pack, its stated size counts.
-    assert choose_package("rödlökar", "piece", 4, red) == (red[2], 1)
-    assert choose_package("rödlökar", "piece", 4, red[:2]) == (red[1], 2)
+    # A pack that says how many it holds beats a bag, even at two packs.
+    assert choose_package("rödlökar", "piece", 4, red) == (red[1], 2)
     loose = [_p("Gul lök 1kg Klass 1 ICA", group="Lök"), _p("Lök gul ca 180g Klass 1 ICA", group="Lök")]
     assert choose_package("lök", "piece", 3, loose) == (loose[1], 1)
 
@@ -672,3 +671,37 @@ async def test_a_pot_of_herbs_is_never_dried():
     wanted = [{"name": "basilika", "text": "1 kruka basilika", "quantity": 1, "unit": "kruka"}]
     results = await async_match_products(api, wanted, "1003380")
     assert [(r["product"], r["pantry"]) for r in results] == [("Basilika i kruka Klass 1 ICA", False)]
+
+
+def test_a_fuzzy_last_letter_never_reaches_a_longer_word():
+    products = [
+        _p("Gräddfil 3% 3dl Arla", group="Gräddfil"),
+        _p("Gräddfil 3% 5dl ICA", group="Gräddfil"),
+        _p("Matlagningsgrädde 15% 5dl ICA", group="Grädde"),
+    ]
+    assert choose_product("grädde", "volume", 300, products) is None
+
+
+def test_slices_and_pieces_count_against_a_stated_pack():
+    salmon = [_p("Laxfilé 2-p 250g ICA", group="Fisk"), _p("Laxfilé 4-p 500g ICA", group="Fisk")]
+    assert small_measure(4, "bitar") == ("piece", 4)
+    assert choose_package("laxfilé", "piece", 4, salmon) == (salmon[1], 1)
+    chicken = [_p("Kycklingfilé 4-p 600g", group="Kyckling"), _p("Kycklingfilé 1kg", group="Kyckling")]
+    assert choose_package("kycklingfilé", "piece", 8, chicken) == (chicken[0], 2)
+
+
+async def test_pieces_on_one_stated_pack_are_added_up():
+    api = MagicMock()
+    api.async_search_products = AsyncMock(return_value=[_p("Rödlök 2-pack Klass 1", "Rödlök", "Lök", consumerItemId="9")])
+    wanted = [
+        {"name": "rödlök", "text": "1 rödlök", "quantity": 1, "unit": None},
+        {"name": "rödlökar", "text": "2 rödlökar", "quantity": 2, "unit": None},
+    ]
+    results = await async_match_products(api, wanted, None)
+    assert {r["text"] for r in results} == {"2 × Rödlök 2-pack Klass 1 (1 rödlök + 2 rödlökar)"}
+
+
+def test_fold_keeps_swedish_letters_and_splits_ligatures():
+    assert search_query("Crème fraîche") == "creme fraiche"
+    assert search_query("ﬁkon") == "fikon"
+    assert search_query("Ärtor") == "ärtor"

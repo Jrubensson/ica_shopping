@@ -18,10 +18,13 @@ WEIGHT_G = {"g": 1, "hg": 100, "kg": 1000}
 SPOON_ML = {"msk": 15, "tsk": 5, "krm": 1}
 PORTION_G = 100  # A 500 g pack of pasta is 5–6 portions.
 PINCH_UNITS = {
-    "nypa", "nypor", "klyfta", "klyftor", "kvist", "kvistar", "blad", "skiva", "skivor",
-    "näve", "nävar", "droppe", "droppar", "bit", "bitar", "cm",
+    "nypa", "nypor", "klyfta", "klyftor", "kvist", "kvistar", "blad", "näve", "nävar",
+    "droppe", "droppar", "cm",
 }
-PIECE_UNITS = {"", "st", "tärning", "tärningar", "huvud", "huvuden", "stjälk", "stjälkar"}
+PIECE_UNITS = {
+    "", "st", "tärning", "tärningar", "huvud", "huvuden", "stjälk", "stjälkar",
+    "bit", "bitar", "skiva", "skivor",
+}
 # A pot or bunch of herbs is fresh, never a jar of dried.
 FRESH_UNITS = {"kruka", "krukor", "knippe", "knippen", "bunt", "kvist", "kvistar"}
 PACKAGE_UNITS = {
@@ -58,7 +61,7 @@ _PLURAL_ENDINGS = ("arna", "orna", "erna", "ar", "or", "er", "na", "a")
 _CLOVES = re.compile(r"s?klyft(?:a|or)$")
 # Variants (in the name or ICA category) are only picked when the recipe asks for them.
 VARIANT_WORDS = (
-    "laktosfri", "låglaktos", "syrad", "ekologisk", "eko", "krav", "eco", "vegan", "glutenfri",
+    "laktosfri", "låglaktos", "syrad", "eko", "krav", "eco", "vegan", "glutenfri",
     "smaksatt", "tryffel", "hållbarhet", "fryst", "alkoholfri", "mousserande", "gravad",
     "i lake", "marinerad", "chili", "vitlök", "citron", "örter", "spray",
 )
@@ -126,7 +129,8 @@ def package_pieces(name: str) -> int | None:
 def fold(text: str) -> str:
     """Lower case without accents, but keeps å, ä and ö, which are letters of their own."""
     return "".join(
-        c if c in "åäö" else unicodedata.normalize("NFKD", c)[0] for c in text.lower()
+        c if c in "åäö" else "".join(d for d in unicodedata.normalize("NFKD", c) if not unicodedata.combining(d))
+        for c in text.lower()
     )
 
 
@@ -157,8 +161,8 @@ def _fits(token: str, word: str) -> bool:
     stem = _stem(word)
     if stem != word and token.startswith(stem) and len(token) <= len(word):
         return True
-    # 'sallad' and 'sallat' are both spelled.
-    return len(word) >= 6 and len(token) >= len(word) and token[: len(word) - 1] == word[:-1]
+    # 'sallad' and 'sallat' are both spelled; same length, so 'grädde' never fits 'gräddfil'.
+    return len(word) >= 6 and len(token) == len(word) and token[:-1] == word[:-1]
 
 
 def _relevance(name: str, words: list[str]) -> int:
@@ -244,7 +248,7 @@ def choose_product(
 
 
 def _small_fit(kind: str, amount: float, name: str) -> tuple[int, int, float] | None:
-    """(count, preference, size) of one package for an amount the shop doesn't sell by."""
+    """(preference, count, size) of one package for an amount the shop doesn't sell by."""
     size = package_size(name)
     pieces = package_pieces(name)
     # Loose, or sold by the item like 'Basilika i kruka Klass 1'.
@@ -254,21 +258,22 @@ def _small_fit(kind: str, amount: float, name: str) -> tuple[int, int, float] | 
     if kind == "measure":
         # A gram of oregano and a ml of it are close enough for a spoonful.
         if size:
-            return max(1, math.ceil(round(amount / size[1], 6))), 0, size[1]
+            return 0, max(1, math.ceil(round(amount / size[1], 6))), size[1]
         return (1, 1, pieces or 0) if pieces or loose else None
     if kind == "piece":
+        # Only a pack that says how many it holds can be counted against the pieces.
         if pieces:
-            return max(1, math.ceil(round(amount / pieces, 6))), 0, pieces
+            return 0, max(1, math.ceil(round(amount / pieces, 6))), pieces
         if loose:
             return 1, 1, 0
-        return (1, 2, size[1]) if size else None
+        return (2, 1, size[1]) if size else None
     if kind == "package":
         count = max(1, math.ceil(round(amount, 6)))
     else:
         count = 1
     if size:
-        return count, 0, size[1]
-    return (count, 1, pieces or 0) if pieces or loose else None
+        return 0, count, size[1]
+    return (1, count, pieces or 0) if pieces or loose else None
 
 
 def choose_package(
@@ -280,11 +285,11 @@ def choose_package(
     best = None
     for rank, product in _candidates(query, products):
         fit = _small_fit(kind, amount, product.get("displayName") or "")
-        if fit is None or fit[0] > MAX_PACKAGES:
+        if fit is None or fit[1] > MAX_PACKAGES:
             continue
         key = (*fit, rank)
         if best is None or key < best[0]:
-            best = (key, product, fit[0])
+            best = (key, product, fit[1])
     return (best[1], best[2]) if best else None
 
 
@@ -352,6 +357,7 @@ async def async_match_products(
             "image": product.get("image"),
             "pantry": is_pantry(product),
             "_needed": base[1] if base else None,
+            "_pieces": small[1] if small and small[0] == "piece" else None,
         }
 
     tasks = [asyncio.create_task(match(item)) for item in wanted]
@@ -373,8 +379,11 @@ async def async_match_products(
         if len(shared) < 2:
             continue
         size = package_size(shared[0]["product"])
+        pieces = package_pieces(shared[0]["product"])
         if size and all(r["_needed"] is not None for r in shared):
             count = max(1, math.ceil(round(sum(r["_needed"] for r in shared) / size[1], 6)))
+        elif pieces and all(r["_pieces"] is not None for r in shared):
+            count = max(1, math.ceil(round(sum(r["_pieces"] for r in shared) / pieces, 6)))
         else:
             count = max(r["count"] for r in shared)
         needed = " + ".join(r["needed"] for r in shared)
@@ -382,5 +391,5 @@ async def async_match_products(
             result["count"] = count
             result["text"] = product_text(result["product"], count, needed)
     for result in results:
-        del result["_needed"]
+        del result["_needed"], result["_pieces"]
     return results
