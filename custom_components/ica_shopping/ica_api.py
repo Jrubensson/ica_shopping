@@ -67,6 +67,10 @@ class IcaConnectionError(IcaError):
     """Network problem or server-side error; worth retrying later."""
 
 
+class IcaRateLimitedError(IcaConnectionError):
+    """ICA answered 429 Too Many Requests."""
+
+
 class IcaGeoBlockedError(IcaConnectionError):
     """Gateway refused a non-Swedish IP (HTTP 451)."""
 
@@ -230,6 +234,8 @@ def _api_headers(token: str) -> dict:
 
 
 async def _read_json(resp: aiohttp.ClientResponse, label: str) -> Any:
+    if resp.status == 429:
+        raise IcaRateLimitedError(f"{label}: HTTP 429")
     if resp.status == 451:
         raise IcaGeoBlockedError("ICA gateway geo-blocks non-Swedish IPs (HTTP 451)")
     if resp.status >= 400:

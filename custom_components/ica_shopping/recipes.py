@@ -310,6 +310,8 @@ async def async_plan_dinners(
         products = [] if not store_account else await async_match_products(
             api, summed_ingredients(recipes, skip_names), store_account
         )
+        if not store_account:
+            extra["products_skipped"] = "no_store"
         swaps = {norm(p["ingredient"]): p["text"] for p in products}
         planned = [{**ing, "text": swaps.get(norm(ing["name"]), ing["text"])} for ing in planned]
         extra["products"] = products

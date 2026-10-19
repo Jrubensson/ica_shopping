@@ -7,7 +7,7 @@ import math
 import re
 from collections import Counter
 
-from .ica_api import ICAApi, IcaError
+from .ica_api import ICAApi, IcaError, IcaRateLimitedError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -30,11 +30,20 @@ _SIZE = re.compile(r"(?:(\d+)\s*[x×]\s*)?(\d+(?:[.,]\d+)?)\s*(ml|cl|dl|l|g|hg|k
 # "Lök gul ca 180g" is a loose item weighed at the till, not a package.
 _APPROXIMATE = re.compile(r"\bca\.?\s*\d", re.I)
 # Variants (in the name or ICA category) are only picked when the recipe asks for them.
+# Most match at a word start ('eco' isn't in 'Pecorino'); 'rökt' also ends compounds like
+# 'Varmrökt', and 'lätt' stands alone so 'Lättsaltat' smör still counts as plain.
 VARIANT_WORDS = (
     "laktosfri", "låglaktos", "syrad", "ekologisk", "krav", "eco", "vegan", "glutenfri",
-    "smaksatt", "lätt", "tryffel", "hållbarhet", "fryst", "rökt", "alkoholfri",
-    "mousserande", "gravad", "i lake", "marinerad", "chili", "vitlök", "citron", "örter",
+    "smaksatt", "tryffel", "hållbarhet", "fryst", "alkoholfri", "mousserande", "gravad",
+    "i lake", "marinerad", "chili", "vitlök", "citron", "örter",
 )
+_VARIANT_PATTERNS = [
+    *((w, re.compile(rf"\b{w}")) for w in VARIANT_WORDS),
+    ("rökt", re.compile("rökt")),
+    ("lätt", re.compile(r"\blätt\b")),
+]
+RATE_LIMIT_RETRIES = 2
+RATE_LIMIT_BACKOFF_SECONDS = 2
 
 
 def to_base(quantity: float, unit: str | None) -> tuple[str, float] | None:
@@ -92,7 +101,7 @@ def _described(product: dict) -> str:
 
 def _is_variant(product: dict, query: str) -> bool:
     described = _described(product)
-    return any(re.search(rf"\b{v}", described) and v not in query for v in VARIANT_WORDS)
+    return any(pattern.search(described) and word not in query for word, pattern in _VARIANT_PATTERNS)
 
 
 def _is_canned(product: dict) -> bool:
@@ -137,8 +146,9 @@ def choose_product(
     return (best[1], best[2]) if best else None
 
 
-def product_text(name: str, count: int) -> str:
-    return name if count == 1 else f"{count} × {name}"
+def product_text(name: str, count: int, needed: str) -> str:
+    """'2 × Mjölk 3% 1l ICA (14 dl mjölk)'; the amount keeps two plans' rows for one product apart."""
+    return f"{name if count == 1 else f'{count} × {name}'} ({needed})"
 
 
 async def async_match_products(
@@ -152,12 +162,22 @@ async def async_match_products(
         query = search_query(item["name"])
         if base is None or not query:
             return None
-        async with semaphore:
-            try:
-                products = await api.async_search_products(query, account_number, SEARCH_LIMIT)
-            except IcaError as err:
-                _LOGGER.debug("Produktsökning för '%s' misslyckades: %s", query, err)
-                return None
+        products = None
+        for attempt in range(RATE_LIMIT_RETRIES + 1):
+            async with semaphore:
+                try:
+                    products = await api.async_search_products(query, account_number, SEARCH_LIMIT)
+                    break
+                except IcaRateLimitedError:
+                    pass
+                except IcaError as err:
+                    _LOGGER.debug("Produktsökning för '%s' misslyckades: %s", query, err)
+                    return None
+            if attempt < RATE_LIMIT_RETRIES:
+                await asyncio.sleep(RATE_LIMIT_BACKOFF_SECONDS * (attempt + 1))
+        if products is None:
+            _LOGGER.debug("Produktsökning för '%s' begränsades av ICA (429)", query)
+            return None
         chosen = choose_product(query, base[0], base[1], products)
         if chosen is None:
             return None
@@ -167,7 +187,7 @@ async def async_match_products(
             "needed": item["text"],
             "product": product.get("displayName"),
             "count": count,
-            "text": product_text(product.get("displayName"), count),
+            "text": product_text(product.get("displayName"), count, item["text"]),
             "product_id": product.get("consumerItemId"),
             "url": product.get("friendlyUrl"),
             "image": product.get("image"),
@@ -192,9 +212,10 @@ async def async_match_products(
     for shared in by_product.values():
         if len(shared) > 1 and (size := package_size(shared[0]["product"])):
             count = max(1, math.ceil(round(sum(r["_needed"] for r in shared) / size[1], 6)))
+            needed = " + ".join(r["needed"] for r in shared)
             for result in shared:
                 result["count"] = count
-                result["text"] = product_text(result["product"], count)
+                result["text"] = product_text(result["product"], count, needed)
     for result in results:
         del result["_needed"]
     return results

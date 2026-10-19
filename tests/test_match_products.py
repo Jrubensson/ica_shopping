@@ -12,7 +12,7 @@ from custom_components.ica_shopping.const import (
     PUBLIC_TOKEN_URL,
     STORE_SEARCH_URL,
 )
-from custom_components.ica_shopping.ica_api import ICAApi, IcaApiError
+from custom_components.ica_shopping.ica_api import ICAApi, IcaApiError, IcaRateLimitedError
 from custom_components.ica_shopping.products import (
     async_match_products,
     choose_product,
@@ -156,9 +156,20 @@ async def test_ingredients_on_one_product_are_counted_together():
     ]
     results = await async_match_products(api, wanted, None)
     assert [(r["ingredient"], r["text"]) for r in results] == [
-        ("gul lök", "2 × Gul lök 500g Klass 1 ICA"),
-        ("lök gul", "2 × Gul lök 500g Klass 1 ICA"),
+        ("gul lök", "2 × Gul lök 500g Klass 1 ICA (400 g gul lök + 300 g lök gul)"),
+        ("lök gul", "2 × Gul lök 500g Klass 1 ICA (400 g gul lök + 300 g lök gul)"),
     ]
+
+
+async def test_a_rate_limited_search_is_retried():
+    api = MagicMock()
+    api.async_search_products = AsyncMock(
+        side_effect=[IcaRateLimitedError("HTTP 429"), [_p("Mjölk 3% 1l ICA")]]
+    )
+    wanted = [{"name": "mjölk", "text": "10 dl mjölk", "quantity": 10, "unit": "dl"}]
+    with patch("custom_components.ica_shopping.products.RATE_LIMIT_BACKOFF_SECONDS", 0):
+        results = await async_match_products(api, wanted, "1003380")
+    assert [r["text"] for r in results] == ["Mjölk 3% 1l ICA (10 dl mjölk)"]
 
 
 async def test_match_products_skips_failed_and_unmeasured_ingredients():
@@ -180,7 +191,7 @@ async def test_match_products_skips_failed_and_unmeasured_ingredients():
         "needed": "4.5 dl vispgrädde",
         "product": "Vispgrädde 36% 5dl ICA",
         "count": 1,
-        "text": "Vispgrädde 36% 5dl ICA",
+        "text": "Vispgrädde 36% 5dl ICA (4.5 dl vispgrädde)",
         "product_id": "42",
         "url": "https://x/42",
         "image": None,
@@ -222,10 +233,10 @@ async def _plan(api, **kwargs):
 async def test_preview_shows_the_swaps():
     api = _api()
     _, _, result = await _plan(api, preview=True, match_products=True, store_account="1003380")
-    assert result["ingredients"] == ["Vispgrädde 36% 5dl Skånemejerier", "2 gula lökar"]
-    assert [(p["needed"], p["text"]) for p in result["products"]] == [
-        ("4.5 dl vispgrädde", "Vispgrädde 36% 5dl Skånemejerier")
-    ]
+    row = "Vispgrädde 36% 5dl Skånemejerier (4.5 dl vispgrädde)"
+    assert result["ingredients"] == [row, "2 gula lökar"]
+    assert [(p["needed"], p["text"]) for p in result["products"]] == [("4.5 dl vispgrädde", row)]
+    assert "products_skipped" not in result
     api.add_to_list.assert_not_called()
 
 
@@ -236,7 +247,7 @@ async def test_commit_adds_the_product_rows():
         AsyncMock(return_value={"id": "list", "name": "Handla", "rows": []}),
     ):
         _, _, result = await _plan(api, match_products=True, store_account="1003380")
-    assert result["added"] == ["Vispgrädde 36% 5dl Skånemejerier", "2 gula lökar"]
+    assert result["added"] == ["Vispgrädde 36% 5dl Skånemejerier (4.5 dl vispgrädde)", "2 gula lökar"]
     assert [c.args[1] for c in api.add_to_list.await_args_list] == result["added"]
 
 
@@ -244,6 +255,7 @@ async def test_without_a_store_nothing_is_searched():
     api = _api()
     _, _, result = await _plan(api, preview=True, match_products=True, store_account=None)
     assert result["products"] == []
+    assert result["products_skipped"] == "no_store"
     assert result["ingredients"] == ["4.5 dl vispgrädde", "2 gula lökar"]
     api.async_search_products.assert_not_called()
 
@@ -268,6 +280,33 @@ async def test_a_slow_search_only_leaves_its_own_ingredient_as_text():
 def test_variant_words_only_match_whole_word_starts():
     products = [_p("Pecorino Romano 150g ICA", group="Ost")]
     assert choose_product("pecorino", "weight", 30, products)[0] is products[0]
+    butter = [_p("Smör Lättsaltat 82% 500g Arla", group="Smör & Margarin")]
+    assert choose_product("smör", "weight", 250, butter)[0] is butter[0]
+
+
+def test_smoked_compounds_are_variants():
+    # Live at a Maxi for 'lax'.
+    products = [
+        _p("Lax Färsk Varmrökt i bit 600g", group="Fisk"),
+        _p("Lax Kallrökt Skivad 150g Mowi", group="Fisk"),
+        _p("Lax najad 150g Miljömärkt ICA", group="Fisk"),
+    ]
+    product, count = choose_product("lax", "weight", 400, products)
+    assert (product["displayName"], count) == ("Lax najad 150g Miljömärkt ICA", 3)
+
+
+async def test_a_second_plan_for_the_same_product_gets_its_own_row():
+    api = _api()
+    earlier = "Vispgrädde 36% 5dl Skånemejerier (3 dl vispgrädde)"
+    with patch(
+        "custom_components.ica_shopping.recipes.async_resolve_or_create_list",
+        AsyncMock(return_value={"id": "list", "name": "Handla", "rows": []}),
+    ):
+        api.async_get_list = AsyncMock(return_value={
+            "id": "list", "name": "Handla", "rows": [{"id": "r1", "text": earlier, "isStriked": False}],
+        })
+        _, _, result = await _plan(api, match_products=True, store_account="1003380")
+    assert result["added"][0] == "Vispgrädde 36% 5dl Skånemejerier (4.5 dl vispgrädde)"
 
 
 async def test_without_the_option_nothing_is_searched():

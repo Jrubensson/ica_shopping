@@ -156,23 +156,25 @@ When `preview` is true or `add_to_list` is false, `list` is `null`, `added` is e
 
 ### Matching products
 
-With `match_products: true`, each ingredient measured in volume or weight is looked up in ICA's product search at your favourite store (the one picked in the options, otherwise the first in the ICA app). The list then gets the product and how many packages to buy instead of the recipe amount:
+With `match_products: true`, each ingredient measured in volume or weight is looked up in ICA's product search at your favourite store (the one picked in the options, otherwise the first in the ICA app). The list then gets the product and how many packages to buy, with the recipe amount after it:
 
 | Recipe amount | On the list |
 |---|---|
-| `4.5 dl vispgrädde` (3 dl + 1,5 dl from two dinners) | `Vispgrädde 36% 5dl Skånemejerier` |
-| `10 dl mjölk` | `Mjölk 3% 1l ICA` |
-| `250 g champinjoner` | `Champinjoner 400g Klass 1 ICA` |
-| `400 g krossade tomater` | `Tomater krossade 500g ICA Basic` |
+| `4.5 dl vispgrädde` (3 dl + 1,5 dl from two dinners) | `Vispgrädde 36% 5dl Skånemejerier (4.5 dl vispgrädde)` |
+| `10 dl mjölk` | `Mjölk 3% 1l ICA (10 dl mjölk)` |
+| `250 g champinjoner` | `Champinjoner 400g Klass 1 ICA (250 g champinjoner)` |
+| `400 g krossade tomater` | `Tomater krossade 500g ICA Basic (400 g krossade tomater)` |
+
+The amount shows why the product is there, and keeps a second plan's row apart from the first when both pick the same product, so neither gets lost.
 
 How a product is picked:
 
 - Its name starts with the ingredient, so `Kokosmjölk` never stands in for mjölk, nor `Mikropopcorn med smör` for smör, and it is in the ICA category most of the matching products share.
 - Lactose-free, soured, flavoured, light, organic, frozen, smoked, cured and long-life variants are only picked when the recipe asks for them. Tinned products only count when nothing fresh fits.
 - Its size is in the same unit kind, and it isn't far bigger than needed: no 5 kg sack for 300 g.
-- Then the fewest packages, then a package close to the amount, then ICA's own ranking. When one package isn't enough the row says how many, e.g. `2 × Kycklingfilé Färsk Minutstrimlor 550g Kronfågel`. Ingredients that land on the same product are counted together.
+- Then the fewest packages, then a package close to the amount, then ICA's own ranking. When one package isn't enough the row says how many, e.g. `2 × Kycklingfilé Färsk Minutstrimlor 550g Kronfågel (600 g kycklingfilé)`. Ingredients that land on the same product are counted together.
 
-Ingredients counted in pieces (`2 gula lökar`), packages (`1 förp`) or spoons (`2 msk smör`), those with no fitting product, those whose search is slow, and everything when the favourite store can't be found keep their recipe text.
+Ingredients counted in pieces (`2 gula lökar`), packages (`1 förp`) or spoons (`2 msk smör`), those with no fitting product, those whose search is slow or keeps being rate-limited by ICA, and everything when the favourite store can't be found keep their recipe text. In that last case the response says `"products_skipped": "no_store"`.
 
 The response gets a `products` list with each swap — `ingredient`, `needed` (the recipe amount), `product`, `count`, `text` (what goes on the list), `product_id`, `url` and `image` — so a preview shows what will be added. Pass `match_products: true` again when you commit; search results are kept for 30 minutes, so the commit picks the same products as the preview. `ingredient_groups` keeps the recipe amounts. The search uses ica.se's anonymous access, like `search_recipes`, and doesn't hold up the shopping-list sync while it runs.
 
