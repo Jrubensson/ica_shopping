@@ -276,6 +276,24 @@ Your own dinners have ids starting with `custom-` and are marked `"custom": true
 
 The search uses the same anonymous access as ica.se, so it doesn't count against your ICA login.
 
+### Favorite recipes
+
+The `favorites` source of `plan_dinners` picks among the recipes saved with the heart in the ICA app. These actions read and change that same list, so a dashboard or an automation can save a dinner you liked:
+
+| Action | |
+|---|---|
+| `ica_shopping.get_favorites` | Responds with `{"recipes": ["719659", …]}`, the favorite recipe ids |
+| `ica_shopping.add_favorite` | Save a recipe (`recipe`: ICA recipe id) as a favorite |
+| `ica_shopping.remove_favorite` | Remove a recipe (`recipe`) from the favorites |
+
+`add_favorite` and `remove_favorite` respond with the updated list, in the same shape as `get_favorites`. It is the same list the ICA app reads its favorites from. Recipe ids come from `search_recipes`, `plan_dinners` and `get_memory`, and from the end of each dinner's recipe link (`…/recept/fransk-kycklinggryta-719659/`). Your own dinners (`custom-…` ids) aren't ICA recipes, so they can't be favorites.
+
+```yaml
+- action: ica_shopping.add_favorite
+  data:
+    recipe: "719659"
+```
+
 ### Dinner Calendar
 
 The integration adds a calendar entity, **Dinners** (e.g. `calendar.ica_handlingslista_dinners`), that shows the dinner history as all-day events — past dinners and the ones planned ahead, with the cooking time, recipe link and ingredients in each description. It reads straight from the memory, so it needs no other calendar integration, and like the memory it keeps the last 120 days.

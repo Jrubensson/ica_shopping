@@ -108,6 +108,9 @@
     "search_recipes_failed": {
       "message": "Searching ICA's recipes failed: {error}"
     },
+    "favorites_failed": {
+      "message": "Updating the ICA favorites failed: {error}"
+    },
     "add_dinner_calendar_failed": {
       "message": "Couldn't add {title} to {entity_id} ({error}). It's saved in the ICA dinner calendar, so don't add it again — add the event by hand."
     },
@@ -139,6 +142,30 @@
         "limit": {
           "name": "Limit",
           "description": "How many recipes to return (1–30)."
+        }
+      }
+    },
+    "get_favorites": {
+      "name": "Get favorite recipes",
+      "description": "Returns the ids of the recipes saved as favorites in the ICA app."
+    },
+    "add_favorite": {
+      "name": "Add favorite recipe",
+      "description": "Saves an ICA recipe as a favorite, like the heart in the ICA app. Plan dinners can then pick it with the Favorites source.",
+      "fields": {
+        "recipe": {
+          "name": "Recipe",
+          "description": "The ICA recipe id, e.g. from Search recipes or a planned dinner."
+        }
+      }
+    },
+    "remove_favorite": {
+      "name": "Remove favorite recipe",
+      "description": "Removes an ICA recipe from the favorites.",
+      "fields": {
+        "recipe": {
+          "name": "Recipe",
+          "description": "The ICA recipe id."
         }
       }
     },

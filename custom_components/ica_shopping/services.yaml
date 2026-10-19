@@ -93,6 +93,29 @@ search_recipes:
           max: 30
           mode: box
 
+get_favorites:
+  description: "The ids of the recipes saved as favorites in the ICA app"
+
+add_favorite:
+  description: "Save an ICA recipe as a favorite, as the heart in the ICA app does"
+  fields:
+    recipe:
+      description: "ICA recipe id"
+      example: "719659"
+      required: true
+      selector:
+        text:
+
+remove_favorite:
+  description: "Remove an ICA recipe from the favorites"
+  fields:
+    recipe:
+      description: "ICA recipe id"
+      example: "719659"
+      required: true
+      selector:
+        text:
+
 add_dinner:
   description: "Save a dinner of your own, without an ICA recipe"
   fields:

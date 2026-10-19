@@ -108,6 +108,9 @@
     "search_recipes_failed": {
       "message": "Det gick inte att söka bland ICA:s recept: {error}"
     },
+    "favorites_failed": {
+      "message": "Det gick inte att uppdatera ICA-favoriterna: {error}"
+    },
     "add_dinner_calendar_failed": {
       "message": "Det gick inte att lägga till {title} i {entity_id} ({error}). Middagen är sparad i ICA:s middagskalender, så lägg inte till den igen – lägg till händelsen för hand."
     },
@@ -139,6 +142,30 @@
         "limit": {
           "name": "Antal",
           "description": "Hur många recept som ska returneras (1–30)."
+        }
+      }
+    },
+    "get_favorites": {
+      "name": "Hämta favoritrecept",
+      "description": "Returnerar id:n för recepten som är sparade som favoriter i ICA-appen."
+    },
+    "add_favorite": {
+      "name": "Spara favoritrecept",
+      "description": "Sparar ett ICA-recept som favorit, som hjärtat i ICA-appen. Planera middagar kan sedan välja det med källan Favoriter.",
+      "fields": {
+        "recipe": {
+          "name": "Recept",
+          "description": "ICA-receptets id, t.ex. från Sök recept eller en planerad middag."
+        }
+      }
+    },
+    "remove_favorite": {
+      "name": "Ta bort favoritrecept",
+      "description": "Tar bort ett ICA-recept från favoriterna.",
+      "fields": {
+        "recipe": {
+          "name": "Recept",
+          "description": "ICA-receptets id."
         }
       }
     },

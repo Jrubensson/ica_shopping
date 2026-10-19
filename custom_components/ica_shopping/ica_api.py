@@ -507,6 +507,13 @@ class ICAApi:
         data = await self._request("GET", f"{RECIPE_PATH}/favorites") or {}
         return [f["recipeId"] for f in data.get("favorites", []) if isinstance(f, dict) and f.get("recipeId")]
 
+    async def async_add_favorite_recipe(self, recipe_id) -> None:
+        """Save a recipe as a favourite, as the heart in the ICA app does."""
+        await self._request("PUT", f"{RECIPE_PATH}/favorites/{recipe_id}")
+
+    async def async_remove_favorite_recipe(self, recipe_id) -> None:
+        await self._request("DELETE", f"{RECIPE_PATH}/favorites/{recipe_id}")
+
     async def async_get_recipe(self, recipe_id) -> dict:
         return await self._request("GET", f"{RECIPE_PATH}/recipes/{recipe_id}?api-version=2.0") or {}
 

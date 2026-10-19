@@ -530,6 +530,62 @@ async def async_setup(hass, config):
         supports_response=SupportsResponse.ONLY,
     )
 
+    # --- Favourite recipes: the hearts in the ICA app, which plan_dinners' favorites source uses ---
+    def _api_or_raise() -> ICAApi:
+        api = hass.data.get(DOMAIN, {}).get(DATA_ICA)
+        if api is None:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="not_logged_in"
+            )
+        return api
+
+    async def _favorite_ids(api: ICAApi) -> list[str]:
+        return [str(i) for i in dict.fromkeys(await api.async_get_favorite_recipe_ids())]
+
+    def _favorites_failed(err: IcaError) -> HomeAssistantError:
+        return HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="favorites_failed",
+            translation_placeholders={"error": str(err)},
+        )
+
+    async def handle_get_favorites(call: ServiceCall) -> ServiceResponse:
+        api = _api_or_raise()
+        try:
+            return {"recipes": await _favorite_ids(api)}
+        except IcaError as err:
+            raise _favorites_failed(err) from err
+
+    def _favorite_handler(favorite: bool):
+        async def handle(call: ServiceCall) -> ServiceResponse:
+            api = _api_or_raise()
+            recipe = call.data["recipe"]
+            try:
+                if favorite:
+                    await api.async_add_favorite_recipe(recipe)
+                else:
+                    await api.async_remove_favorite_recipe(recipe)
+                # The whole list back, so a dashboard can redraw its hearts without asking again.
+                return {"recipes": await _favorite_ids(api)}
+            except IcaError as err:
+                raise _favorites_failed(err) from err
+
+        return handle
+
+    hass.services.async_register(
+        DOMAIN, "get_favorites", handle_get_favorites, supports_response=SupportsResponse.ONLY
+    )
+    # Only ICA recipe ids: your own dinners (custom-…) aren't ICA recipes, so they can't be favourites.
+    favorite_schema = vol.Schema({vol.Required("recipe"): vol.All(vol.Coerce(str), vol.Match(r"^\d+$"))})
+    for service, favorite in (("add_favorite", True), ("remove_favorite", False)):
+        hass.services.async_register(
+            DOMAIN,
+            service,
+            _favorite_handler(favorite),
+            schema=favorite_schema,
+            supports_response=SupportsResponse.OPTIONAL,
+        )
+
     async def _store_account_number(api: ICAApi, options: dict) -> tuple[str | None, str | None]:
         """(account number, why there is none) for the product search; found ones are kept a day."""
         data = hass.data[DOMAIN]
