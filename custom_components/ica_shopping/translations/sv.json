@@ -199,6 +199,10 @@
           "name": "Förhandsgranska",
           "description": "Returnera menyn och de sammanslagna ingredienserna utan att lägga till något på listan."
         },
+        "add_to_list": {
+          "name": "Lägg till på listan",
+          "description": "Lägg till ingredienserna på inköpslistan. Stäng av för att bara planera middagarna: de sparas ändå i middagsminnet och kalendern."
+        },
         "recipes": {
           "name": "Recept-id",
           "description": "Recept-id att använda, t.ex. '123,456'. Ersätter count och source, så att exakt det förhandsgranskade menyn läggs till."

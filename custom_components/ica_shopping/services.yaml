@@ -50,6 +50,11 @@ plan_dinners:
       default: false
       selector:
         boolean:
+    add_to_list:
+      description: "Add the ingredients to the shopping list."
+      default: true
+      selector:
+        boolean:
     recipes:
       description: "Recipe ids to use, e.g. '123,456'. Overrides count and source."
       example: "123,456"

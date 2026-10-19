@@ -199,6 +199,10 @@
           "name": "Preview",
           "description": "Return the menu and the merged ingredients without adding anything to the list."
         },
+        "add_to_list": {
+          "name": "Add to list",
+          "description": "Add the ingredients to the shopping list. Turn off to only plan the dinners: they are still saved in the dinner memory and calendar."
+        },
         "recipes": {
           "name": "Recipe ids",
           "description": "Recipe ids to use, e.g. '123,456'. Overrides count and source, so exactly the previewed menu is added."

@@ -32,32 +32,70 @@ def _ingredients(recipe: dict) -> Iterable[dict]:
                 yield ing
 
 
+def _ingredient_name(ing: dict) -> str:
+    return (ing.get("ingredient") or ing.get("text") or "").strip()
+
+
+def _group_by_name(recipes: list[dict]) -> dict[str, list[tuple[dict, dict]]]:
+    """(ingredient, recipe) pairs keyed by lower-cased ingredient name, in first-seen order."""
+    groups: dict[str, list[tuple[dict, dict]]] = {}
+    for recipe in recipes:
+        for ing in _ingredients(recipe):
+            if name := _ingredient_name(ing):
+                groups.setdefault(name.lower(), []).append((ing, recipe))
+    return groups
+
+
+def _summed_text(name: str, ings: list[dict]) -> str | None:
+    units = {ing.get("unit") or "" for ing in ings}
+    qtys = [ing.get("quantity") for ing in ings]
+    if len(units) == 1 and all(isinstance(q, (int, float)) for q in qtys) and any(qtys):
+        unit = ings[0].get("unit")
+        return f"{sum(qtys):g}{(' ' + unit) if unit else ''} {name}".strip()
+    return None
+
+
+def _distinct_lines(ings: list[dict]) -> list[str]:
+    return [t for t in dict.fromkeys((ing.get("text") or "").strip() for ing in ings) if t]
+
+
 def aggregate_ingredients(recipes: list[dict]) -> list[dict]:
     """Merge ingredients across recipes into [{name, text}], keeping first-seen order.
 
     Same ingredient + same unit is summed ('2 dl' + '3 dl mjölk' → '5 dl mjölk');
     otherwise each distinct original line is kept.
     """
-    groups: dict[str, list[dict]] = {}
-    for recipe in recipes:
-        for ing in _ingredients(recipe):
-            name = (ing.get("ingredient") or ing.get("text") or "").strip()
-            if name:
-                groups.setdefault(name.lower(), []).append(ing)
-
     out: list[dict] = []
-    for ings in groups.values():
-        name = (ings[0].get("ingredient") or ings[0].get("text") or "").strip()
-        units = {ing.get("unit") or "" for ing in ings}
-        qtys = [ing.get("quantity") for ing in ings]
-        if len(units) == 1 and all(isinstance(q, (int, float)) for q in qtys) and any(qtys):
-            unit = ings[0].get("unit")
-            text = f"{sum(qtys):g}{(' ' + unit) if unit else ''} {name}".strip()
+    for pairs in _group_by_name(recipes).values():
+        ings = [ing for ing, _ in pairs]
+        name = _ingredient_name(ings[0])
+        if (text := _summed_text(name, ings)) is not None:
             out.append({"name": name, "text": text})
         else:
-            for text in dict.fromkeys((ing.get("text") or "").strip() for ing in ings):
-                if text:
-                    out.append({"name": name, "text": text})
+            out.extend({"name": name, "text": line} for line in _distinct_lines(ings))
+    return out
+
+
+def group_ingredients(recipes: list[dict], skip_names: Iterable[str] = ()) -> list[dict]:
+    """One [{name, text, lines, dinners}] entry per ingredient name across the recipes.
+
+    text is the summed amount when aggregate_ingredients would sum it, otherwise the
+    distinct lines joined with ' + '. Names in skip_names (lower-cased) are left out.
+    """
+    skip = {norm(n) for n in skip_names}
+    out: list[dict] = []
+    for key, pairs in _group_by_name(recipes).items():
+        if key in skip:
+            continue
+        ings = [ing for ing, _ in pairs]
+        name = _ingredient_name(ings[0])
+        lines = _distinct_lines(ings)
+        out.append({
+            "name": name,
+            "text": _summed_text(name, ings) or " + ".join(lines),
+            "lines": lines,
+            "dinners": [t for t in dict.fromkeys(r.get("title") for _, r in pairs) if t],
+        })
     return out
 
 
@@ -160,6 +198,7 @@ async def async_plan_dinners(
     default_list_id: str,
     never_add: Iterable[str],
     preview: bool = False,
+    add_to_list: bool = True,
     recipe_ids: list | None = None,
     avoid_ids: Iterable | None = None,
 ) -> tuple[dict | None, list[dict], dict]:
@@ -167,6 +206,7 @@ async def async_plan_dinners(
 
     With preview=True the list is left untouched and the response carries the menu and the
     merged ingredients, so a caller can show a suggestion before committing it.
+    add_to_list=False also leaves the list untouched, for callers that shop elsewhere.
     """
     recipes = await async_fetch_recipes(api, count, source, recipe_ids, avoid_ids)
     if not recipes:
@@ -175,12 +215,13 @@ async def async_plan_dinners(
     skip_names = {norm(n) for n in never_add}
     planned = [ing for ing in aggregate_ingredients(recipes) if norm(ing["name"]) not in skip_names]
 
-    if preview:
+    if preview or not add_to_list:
         return None, recipes, {
             "list": None,
-            "preview": True,
+            "preview": preview,
             "dinners": [dinner_summary(r) for r in recipes],
             "ingredients": [ing["text"] for ing in planned],
+            "ingredient_groups": group_ingredients(recipes, skip_names),
             "added": [],
             "skipped_list_full": [],
         }

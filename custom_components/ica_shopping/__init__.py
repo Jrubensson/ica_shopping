@@ -515,6 +515,7 @@ async def async_setup(hass, config):
                     default_list_id=default_list_id,
                     never_add=options.get(CONF_NEVER_ADD, DEFAULT_NEVER_ADD),
                     preview=preview,
+                    add_to_list=call.data.get("add_to_list", True),
                     recipe_ids=recipe_ids,
                     avoid_ids=avoid_ids,
                 )
@@ -675,6 +676,7 @@ async def async_setup(hass, config):
             vol.Optional("calendar"): cv.entity_domain("calendar"),
             vol.Optional("start_date"): cv.date,
             vol.Optional("preview", default=False): cv.boolean,
+            vol.Optional("add_to_list", default=True): cv.boolean,
             # Recipe ids to commit exactly what was previewed; "1,2,3" is accepted too.
             vol.Optional("recipes"): vol.Any(cv.string, [vol.Coerce(str)]),
             # Skip recipes eaten within this many days (0 = don't skip).

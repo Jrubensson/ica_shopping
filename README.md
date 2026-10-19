@@ -114,6 +114,7 @@ mode: single
 | `calendar` | the **Default calendar** option | Another calendar entity; also adds one all-day event per dinner there |
 | `start_date` | tomorrow | Earliest day for the first dinner; each dinner goes on the next day that doesn't already have one |
 | `preview` | `false` | Return the menu and merged ingredients without changing the list |
+| `add_to_list` | `true` | Add the ingredients to the shopping list. Set `false` to only plan: the dinners still go in the dinner memory and calendar |
 | `recipes` | – | Recipe ids to use, e.g. `"123,456"`. Overrides `count` and `source`, so a previewed menu can be committed exactly |
 | `avoid_days` | `0` | Skip recipes eaten within this many days (uses the dinner memory) |
 
@@ -149,6 +150,8 @@ automation:
 ```
 
 The response looks like `{"list": "Handla", "preview": false, "dinners": [{"id": 719920, "title": …, "cooking_time": …, "url": …, "ingredients": […], "date": "2026-10-19"}], "ingredients": ["5 dl mjölk", …], "added": ["5 dl mjölk", …], "skipped_list_full": []}`; `date` is left out and `added` is empty when `preview` is true.
+
+When `preview` is true or `add_to_list` is false, `list` is `null`, `added` is empty and the response also has `ingredient_groups`: one entry per ingredient across the menu, e.g. `{"name": "vispgrädde", "text": "4.5 dl vispgrädde", "lines": ["3 dl vispgrädde", "1,5 dl vispgrädde"], "dinners": ["Pasta", "Soppa"]}`. `text` is the summed amount when every line shares a unit, otherwise the lines joined with ` + `. Items on the never-add list are left out.
 
 ### Preview, then commit what you picked
 
