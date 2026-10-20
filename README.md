@@ -117,6 +117,7 @@ mode: single
 | `add_to_list` | `true` | Add the ingredients to the shopping list. Set `false` to only plan: the dinners still go in the dinner memory and calendar |
 | `match_products` | `false` | Swap volume and weight amounts for an ICA product and package count, e.g. `4.5 dl vispgrädde` → `Vispgrädde 36% 5dl Skånemejerier`. See [Matching products](#matching-products) |
 | `recipes` | – | Recipe ids to use, e.g. `"123,456"`. Overrides `count` and `source`, so a previewed menu can be committed exactly |
+| `items` | – | Only put these ingredients on the list: names from a preview's `ingredient_groups`, as a list or one per line. See [Adding only some ingredients](#adding-only-some-ingredients) |
 | `avoid_days` | `0` | Skip recipes eaten within this many days (uses the dinner memory) |
 
 Ingredients already on the list are skipped, as are pantry staples listed under **Never add from recipes** in the integration's options (default: salt, peppar, svartpeppar, vatten, olja, olivolja, smör).
@@ -152,7 +153,24 @@ automation:
 
 The response looks like `{"list": "Handla", "preview": false, "dinners": [{"id": 719920, "title": …, "cooking_time": …, "url": …, "ingredients": […], "date": "2026-10-19"}], "ingredients": ["5 dl mjölk", …], "added": ["5 dl mjölk", …], "skipped_list_full": []}`; `date` is left out and `added` is empty when `preview` is true.
 
-When `preview` is true or `add_to_list` is false, `list` is `null`, `added` is empty and the response also has `ingredient_groups`: one entry per ingredient across the menu, e.g. `{"name": "vispgrädde", "text": "4.5 dl vispgrädde", "lines": ["3 dl vispgrädde", "1,5 dl vispgrädde"], "dinners": ["Pasta", "Soppa"]}`. `text` is the summed amount when every line shares a unit, otherwise the lines joined with ` + `. Items on the never-add list are left out.
+When `preview` is true or `add_to_list` is false, `list` is `null`, `added` is empty and the response also has `ingredient_groups`: one entry per ingredient across the menu, e.g. `{"name": "vispgrädde", "text": "4.5 dl vispgrädde", "lines": ["3 dl vispgrädde", "1,5 dl vispgrädde"], "dinners": ["Pasta", "Soppa"]}`. `text` is the summed amount when every line shares a unit, otherwise the lines joined with ` + `. Items on the never-add list are left out. In a preview, a group that a row on the list already covers says which, e.g. `"on_list": "Mjölk"`, using the same word matching as planning (see [Dinners and the shopping list](#dinners-and-the-shopping-list)); it is left out when no single row covers everything the plan would add for it.
+
+### Adding only some ingredients
+
+Pass `items` with the `name`s of the `ingredient_groups` to put on the list, e.g. after a screen has let you untick what you already have. Only those go on the list; the rest are left off this time (they are not added to the never-add list). With `match_products`, a chosen ingredient goes on as its product, and only the chosen ones are looked up, so a product two ingredients share is counted for the chosen ones only. Each dinner's `on_list` and `put_on_list` note the rows it actually got, so `remove_dinner`, `get_list_dinners` and `update_list` work as for a full plan. Names that match no group are returned in `items_not_found`. Leave `items` out to add everything; an empty list adds nothing.
+
+It works for dinners that are already planned: commit them first with `add_to_list: false`, and shop later with the same `recipes`, `add_to_list: true` and `items`. Dinners already in the memory keep their day (also tonight's, unless `start_date` is later) and get no second calendar event; they just get the rows noted.
+
+```yaml
+- action: ica_shopping.plan_dinners
+  data:
+    recipes: "719920,722011"
+    match_products: true
+    items: ["vispgrädde", "pasta"]
+  response_variable: plan
+# plan.added: ["Vispgrädde 36% 5dl (4.5 dl vispgrädde)", …]
+# plan.dinners[0].put_on_list: the rows that dinner got, which remove_dinner takes off again
+```
 
 ### Matching products
 
@@ -190,7 +208,7 @@ Amounts the shop doesn't sell by get the smallest normal package of that product
 
 Ingredients with an amount the matcher doesn't know (`1 sats`), those with no fitting product, those whose search is slow or keeps being rate-limited by ICA, and everything when the favourite store can't be found keep their recipe text. In that last case the response says why: `"products_skipped": "no_store"` when no favourite store is set in the ICA app, or `"store_lookup_failed"` when ICA couldn't be reached for it.
 
-The response gets a `products` list with each swap — `ingredient`, `needed` (the recipe amount), `product`, `count`, `text` (what goes on the list), `product_id`, `url`, `image` and `pantry` — so a preview shows what will be added. `pantry` is `true` for spices, dried herbs, stock, tomato purée, oil, flour, sugar and salt, which most kitchens already have, so a UI can leave them unticked; they are still added to the list, so remove the ones you have afterwards, or put staples you always have in the never-add list. Pass `match_products: true` again when you commit; search results are kept for 30 minutes, so the commit picks the same products as the preview. `ingredient_groups` keeps the recipe amounts. The search uses ica.se's anonymous access, like `search_recipes`, and doesn't hold up the shopping-list sync while it runs.
+The response gets a `products` list with each swap — `ingredient`, `needed` (the recipe amount), `product`, `count`, `text` (what goes on the list), `product_id`, `url`, `image` and `pantry` — so a preview shows what will be added. `pantry` is `true` for spices, dried herbs, stock, tomato purée, oil, flour, sugar and salt, which most kitchens already have, so a UI can leave them unticked; they are still added to the list unless you leave them out of `items` when you commit, or put staples you always have in the never-add list. Pass `match_products: true` again when you commit; search results are kept for 30 minutes, so the commit picks the same products as the preview. `ingredient_groups` keeps the recipe amounts. The search uses ica.se's anonymous access, like `search_recipes`, and doesn't hold up the shopping-list sync while it runs.
 
 ### Preview, then commit what you picked
 

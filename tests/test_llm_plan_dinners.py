@@ -37,3 +37,8 @@ async def test_add_to_list_is_left_to_the_service_default(hass):
 async def test_match_products_is_forwarded(hass):
     data = await _forwarded(hass, {"preview": True, "recipes": "1,2", "match_products": True})
     assert data["match_products"] is True
+
+
+async def test_items_are_forwarded(hass):
+    data = await _forwarded(hass, {"preview": False, "recipes": "1,2", "items": ["vispgrädde", "pasta"]})
+    assert data["items"] == ["vispgrädde", "pasta"]

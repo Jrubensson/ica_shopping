@@ -415,6 +415,44 @@ async def async_resolve_or_create_list(api: ICAApi, ref: str | None, default_id:
     return await api.async_create_list(ref.strip())
 
 
+def covering_row(rows: Iterable[str], ing: dict) -> str | None:
+    """The list row that already has the planned ingredient: one reading as its name or line,
+    else one worded otherwise that covers the line ("Varmkorv" for "8 varmkorvar")."""
+    rows = list(rows)
+    keys = {norm(ing["name"]), norm(ing["text"])}
+    return next((r for r in rows if norm(r) in keys), None) or next(
+        (r for r in rows if covers(r, ing["text"])), None
+    )
+
+
+async def _async_rows_now(api: ICAApi, list_ref: str | None, default_list_id: str) -> list[str] | None:
+    """The unchecked rows of the list a plan would go on, without creating it; None when it
+    can't be read."""
+    try:
+        lists = await api.async_get_lists()
+        if list_ref and list_ref.strip():
+            found = next((L for L in lists if norm(L.get("name")) == norm(list_ref) or list_matches(L, list_ref)), None)
+        else:
+            found = next((L for L in lists if list_matches(L, default_list_id)), None)
+        if found is None:
+            return [] if list_ref else None
+        found = await api.async_get_list(found["id"]) or found
+        return [r["text"] for r in found.get("rows", []) if r.get("text") and not r.get("isStriked")]
+    except Exception as err:  # noqa: BLE001 - the preview stands without on_list
+        _LOGGER.debug("🛒 Kunde inte läsa listan för förhandsvisningen: %s", err)
+        return None
+
+
+def _mark_on_list(groups: list[dict], planned: list[dict], rows: list[str]) -> None:
+    """Give each ingredient group the row that already covers it ("on_list"), when one row
+    covers everything the plan would add for it."""
+    for group in groups:
+        mine = [ing for ing in planned if norm(ing["name"]) == norm(group["name"])]
+        found = [covering_row(rows, ing) for ing in mine]
+        if found and all(found):
+            group["on_list"] = found[0]
+
+
 async def async_add_to_list(
     api: ICAApi, planned: list[dict], list_ref: str | None, default_list_id: str
 ) -> tuple[dict, list[str], list[str], list[tuple[str, bool] | None]]:
@@ -523,6 +561,7 @@ async def async_plan_dinners(
     rules: Iterable[dict] = (),
     variants: dict | None = None,
     own_recipes: dict | None = None,
+    items: Iterable[str] | None = None,
 ) -> tuple[dict | None, list[dict], dict]:
     """Return (target list, recipes, service response).
 
@@ -538,6 +577,9 @@ async def async_plan_dinners(
     "omitted" and "extra", and "rule_conflicts" lists picked dishes built around a rule's ingredient.
     Once the list is updated, each dinner has the rows it is on in "on_list", and the ones this
     plan put there in "put_on_list", so removing the dinner can take them off again.
+    `items` (ingredient group names, any case) limits what goes on the list to those; the rest
+    are left off this time only. A preview's ingredient groups then still has them all, and
+    each group says which row already covers it in "on_list".
     """
     rules = list(rules)
     recipes = await async_fetch_recipes(api, count, source, recipe_ids, avoid_ids, rules, own_recipes)
@@ -552,29 +594,42 @@ async def async_plan_dinners(
         _LOGGER.debug("🍽️ Valda rätter som bygger på en undvikt ingrediens: %s", conflicts)
     # The recipes as they will be cooked, so left-out ingredients stay off the list
     cooked = [_without(r, a["omitted"], a["extra"]) for r, a in zip(recipes, adjusted)]
-    planned = [ing for ing in aggregate_ingredients(cooked) if norm(ing["name"]) not in skip_names]
+    # Every ingredient the plan could add; `planned` is what it will add
+    everything = [ing for ing in aggregate_ingredients(cooked) if norm(ing["name"]) not in skip_names]
     extra: dict = {}
+    left_off: set[str] = set()
+    if items is not None:
+        chosen = {norm(i) for i in items}
+        names = {norm(ing["name"]) for ing in everything}
+        left_off = names - chosen
+        if unknown := [i for i in items if norm(i) not in names]:
+            extra["items_not_found"] = unknown
     if match_products:
         # Without the store, ICA's all-store search is too noisy to pick products from.
         products = [] if not store_account else await async_match_products(
-            api, summed_ingredients(cooked, skip_names), store_account
+            api, summed_ingredients(cooked, skip_names | left_off), store_account
         )
         if not store_account:
             extra["products_skipped"] = "no_store"
         swaps = {norm(p["ingredient"]): p["text"] for p in products}
-        planned = [{**ing, "text": swaps.get(norm(ing["name"]), ing["text"])} for ing in planned]
+        everything = [{**ing, "text": swaps.get(norm(ing["name"]), ing["text"])} for ing in everything]
         extra["products"] = products
+    planned = [ing for ing in everything if norm(ing["name"]) not in left_off]
 
     if conflicts:
         extra["rule_conflicts"] = conflicts
 
     if preview or not add_to_list or not recipes:
+        groups = group_ingredients(cooked, skip_names)
+        if preview and (rows := await _async_rows_now(api, list_ref, default_list_id)) is not None:
+            # Every group, chosen or not, so a screen can tick what isn't on the list yet
+            _mark_on_list(groups, everything, rows)
         return None, recipes, {
             "list": None,
             "preview": preview,
             "dinners": dinners,
             "ingredients": [ing["text"] for ing in planned],
-            "ingredient_groups": group_ingredients(cooked, skip_names),
+            "ingredient_groups": groups,
             "added": [],
             "skipped_list_full": [],
             **extra,

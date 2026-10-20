@@ -149,7 +149,12 @@ class DinnerMemory:
             key = (str(recipe_id), date)
             if key in known:
                 # Planned again: its rows on the list may have changed
-                changed |= _merge_rows(self.find(str(recipe_id), date), dinner)
+                entry = self.find(str(recipe_id), date)
+                if _merge_rows(entry, dinner):
+                    changed = True
+                    # Saved without the list before, so removing it would look on the wrong one
+                    if entry.get("list") is None and list_name:
+                        entry["list"] = list_name
                 continue
             if date in taken:
                 _LOGGER.debug("🍽️ %s har redan en middag – hoppar över %s", date, recipe_id)

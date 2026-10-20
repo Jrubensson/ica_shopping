@@ -66,6 +66,12 @@ plan_dinners:
       example: "123,456"
       selector:
         text:
+    items:
+      description: "Only put these ingredients on the list: names from a preview's ingredient_groups, as a list or one per line. The rest are left off this time. Leave out to add everything; an empty list adds nothing."
+      example: "vispgrädde\npasta"
+      selector:
+        text:
+          multiline: true
     avoid_days:
       description: "Skip recipes eaten within this many days."
       example: 14

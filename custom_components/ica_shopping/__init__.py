@@ -661,6 +661,7 @@ async def async_setup(hass, config):
                 rules=memory.food_rules if memory is not None else (),
                 variants=memory.variants if memory is not None else None,
                 own_recipes=memory.own_recipes if memory is not None else None,
+                items=_lines(call.data["items"]) if "items" in call.data else None,
             )
         except NoRecipesError as err:
             raise HomeAssistantError(
@@ -683,11 +684,14 @@ async def async_setup(hass, config):
             await sync()
 
         if not preview:
-            start = call.data.get("start_date") or dt_util.now().date() + dt.timedelta(days=1)
+            today = dt_util.now().date()
+            start = call.data.get("start_date") or today + dt.timedelta(days=1)
             count = len(result["dinners"])
             if memory is not None:
-                # A repeated commit keeps a recipe's planned day instead of planning it twice.
-                planned = [memory.planned_day(str(d.get("id")), start) for d in result["dinners"]]
+                # A repeated commit keeps a recipe's planned day instead of planning it twice,
+                # also tonight's when no start date says otherwise.
+                since = call.data.get("start_date") or today
+                planned = [memory.planned_day(str(d.get("id")), since) for d in result["dinners"]]
                 free = iter(memory.free_days(start, planned.count(None)))
                 days = [day or next(free) for day in planned]
             else:
@@ -1287,6 +1291,8 @@ async def async_setup(hass, config):
             vol.Optional("match_products", default=False): cv.boolean,
             # Recipe ids to commit exactly what was previewed; "1,2,3" is accepted too.
             vol.Optional("recipes"): vol.Any(cv.string, [vol.Coerce(str)]),
+            # Ingredient group names to put on the list, as a list or one per line; the rest stay off.
+            vol.Optional("items"): vol.Any(cv.string, [cv.string]),
             # Skip recipes eaten within this many days (0 = don't skip).
             vol.Optional("avoid_days", default=0): vol.All(vol.Coerce(int), vol.Range(min=0, max=365)),
         }),

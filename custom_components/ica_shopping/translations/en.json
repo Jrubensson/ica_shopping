@@ -368,6 +368,10 @@
           "name": "Recipe ids",
           "description": "Recipe ids to use, e.g. '123,456', or an own recipe's 'own-1a2b3c4d'. Overrides count and source, so exactly the previewed menu is added."
         },
+        "items": {
+          "name": "Ingredients to add",
+          "description": "Only put these ingredients on the list: names from a preview's ingredient groups, one per line. The rest are left off this time. Leave out to add everything; an empty list adds nothing."
+        },
         "avoid_days": {
           "name": "Avoid recent days",
           "description": "Skip recipes eaten within this many days. 0 turns it off."
