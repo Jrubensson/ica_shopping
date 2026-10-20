@@ -55,7 +55,9 @@ class FakeList:
         return api
 
     async def _add(self, _list, text, striked=False):
-        self.rows.append({"id": f"r{len(self.rows)}", "text": text, "isStriked": striked})
+        # Never reuse an id, or removing one row would take another along
+        self.added = getattr(self, "added", 0) + 1
+        self.rows.append({"id": f"n{self.added}", "text": text, "isStriked": striked})
         return True
 
     async def _remove(self, _list, ids):
@@ -254,3 +256,88 @@ async def test_remove_dinner_keeps_a_row_another_dinner_needs_by_its_words(hass,
     assert "Mjölk" not in response["list_removed"]
     assert "Mjölk" in the_list.texts()
     assert tunnbrod["put_on_list"] == ["Mjölk"]
+
+
+async def test_our_version_brings_the_list_along(hass, setup):
+    the_list = FakeList()
+    memory = await setup(the_list)
+    await _plan_ids(hass, "1", iso(1))
+    assert the_list.texts() == ["3 dl vispgrädde", "400 g pasta", "1 Lök"]
+
+    response = await _call(
+        hass, "set_recipe_variant", recipe="1", omit=["400 g pasta"], add=["2 morötter"], update_list=True
+    )
+    assert response["list_removed"] == ["400 g pasta"]
+    assert response["list_added"] == ["2 morötter"]
+    assert the_list.texts() == ["3 dl vispgrädde", "1 Lök", "2 morötter"]
+    entry = memory.on(iso(1))
+    assert entry["on_list"] == ["3 dl vispgrädde", "1 Lök", "2 morötter"]
+    assert entry["put_on_list"] == ["3 dl vispgrädde", "1 Lök", "2 morötter"]
+
+    # Back to ICA's recipe: the pasta returns, the carrots go
+    response = await _call(hass, "remove_recipe_variant", recipe="1", update_list=True)
+    assert response["list_added"] == ["400 g pasta"] and response["list_removed"] == ["2 morötter"]
+    assert sorted(the_list.texts()) == ["1 Lök", "3 dl vispgrädde", "400 g pasta"]
+
+
+async def test_our_version_keeps_rows_others_need_and_leaves_lists_alone_unasked(hass, setup):
+    the_list = FakeList()
+    await setup(the_list)
+    await _plan(hass, iso(1))  # Pasta and Soppa share the cream
+    rows = the_list.texts()
+
+    await _call(hass, "set_recipe_variant", recipe="1", omit=["3 dl vispgrädde"])
+    assert the_list.texts() == rows
+
+    response = await _call(hass, "set_recipe_variant", recipe="1", omit=["3 dl vispgrädde", "1 gul lök"], update_list=True)
+    # The summed cream is Soppa's too; the onion only Pasta's
+    assert response["list_removed"] == ["1 gul lök"]
+    assert "4.5 dl vispgrädde" in the_list.texts()
+
+
+async def test_a_dinner_planned_without_the_list_stays_off_it(hass, setup):
+    the_list = FakeList()
+    await setup(the_list)
+    with patch("custom_components.ica_shopping._pick_calendar", return_value=None):
+        await _call(hass, "plan_dinners", recipes="1", start_date=iso(1), add_to_list=False)
+
+    response = await _call(hass, "set_recipe_variant", recipe="1", add=["2 morötter"], update_list=True)
+    assert response["list_added"] == [] and the_list.texts() == []
+
+
+async def test_changing_an_own_recipe_brings_the_list_along(hass, setup):
+    the_list = FakeList()
+    memory = await setup(the_list)
+    hass.data[DOMAIN][DATA_ICA].async_search_recipes = AsyncMock(return_value=[])
+    soup = await _call(hass, "save_recipe", title="Soppa", ingredients="2 förp soppa\n1 baguette")
+    with patch("custom_components.ica_shopping._pick_calendar", return_value=None):
+        await _call(hass, "plan_dinners", recipes=soup["id"], start_date=iso(1))
+
+    response = await _call(
+        hass, "save_recipe", recipe=soup["id"], ingredients="2 förp soppa\n1 dl riven ost", update_list=True
+    )
+    assert response["list_removed"] == ["1 baguette"] and response["list_added"] == ["1 dl riven ost"]
+    assert the_list.texts() == ["2 förp soppa", "1 dl riven ost"]
+    assert memory.on(iso(1))["ingredients"] == ["2 förp soppa", "1 dl riven ost"]
+
+
+async def test_an_ica_dinner_becomes_an_own_recipe_in_place(hass, setup):
+    the_list = FakeList()
+    memory = await setup(the_list)
+    hass.data[DOMAIN][DATA_ICA].async_search_recipes = AsyncMock(return_value=[])
+    await _plan_ids(hass, "1", iso(1))
+    rows = list(the_list.texts())
+
+    copy = await _call(
+        hass, "save_recipe", title="Pasta", dinner=iso(1), update_list=True,
+        ingredients=["3 dl vispgrädde", "400 g pasta", "1 gul lök"], steps="Koka pastan.",
+    )
+    entry = memory.on(iso(1))
+    assert entry["id"] == copy["id"] and entry["title"] == "Pasta"
+    # The same lines: the list and the dinner's rows stay as they were
+    assert copy["list_added"] == [] and copy["list_removed"] == []
+    assert the_list.texts() == rows
+    assert entry["put_on_list"] == rows
+
+    with pytest.raises(HomeAssistantError):
+        await _call(hass, "save_recipe", title="Ingen", dinner=iso(9))

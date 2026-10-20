@@ -9,7 +9,7 @@ from custom_components.ica_shopping import async_setup
 from custom_components.ica_shopping.calendar import _to_event
 from custom_components.ica_shopping.const import DATA_ICA, DOMAIN
 from custom_components.ica_shopping.memory import DinnerMemory
-from custom_components.ica_shopping.recipes import _own_ingredient
+from custom_components.ica_shopping.recipes import own_ingredient
 
 
 def iso(offset: int) -> str:
@@ -40,7 +40,7 @@ PASTA = {
     ],
 )
 def test_own_lines_get_an_amount_and_a_name(line, expected):
-    ing = _own_ingredient(line)
+    ing = own_ingredient(line)
     assert (ing["ingredient"], ing.get("quantity"), ing.get("unit")) == expected
     assert ing["text"] == line
 

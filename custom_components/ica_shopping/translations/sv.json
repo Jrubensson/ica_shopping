@@ -293,6 +293,10 @@
         "title": {
           "name": "Titel",
           "description": "Receptets titel, om den inte finns i middagsminnet."
+        },
+        "update_list": {
+          "name": "Uppdatera inköpslistan",
+          "description": "Ta också med inköpslistan för kommande middagar med receptet: nya rader läggs till, rader för det som inte längre finns tas bort."
         }
       }
     },
@@ -303,6 +307,10 @@
         "recipe": {
           "name": "Recept",
           "description": "ICA-receptets id."
+        },
+        "update_list": {
+          "name": "Uppdatera inköpslistan",
+          "description": "Ta också med inköpslistan för kommande middagar med receptet: nya rader läggs till, rader för det som inte längre finns tas bort."
         }
       }
     },
@@ -441,6 +449,14 @@
         "image_search": {
           "name": "Bildsökning",
           "description": "Sök bland ICA:s recept på detta i stället för titeln för att hitta bilden."
+        },
+        "update_list": {
+          "name": "Uppdatera inköpslistan",
+          "description": "Ta också med inköpslistan för kommande middagar med receptet: nya rader läggs till, rader för det som inte längre finns tas bort."
+        },
+        "dinner": {
+          "name": "Middag",
+          "description": "Lägg också receptet på den här dagens middag i stället för det som ligger där, med middagens rader på inköpslistan."
         }
       }
     },

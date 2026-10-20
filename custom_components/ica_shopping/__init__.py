@@ -57,8 +57,10 @@ from .recipes import (
     NoRecipesError,
     async_plan_dinners,
     entry_description,
+    async_add_to_list,
     cooked_lines,
     norm as _norm,
+    own_ingredient,
     search_summary,
 )
 from .matching import covers
@@ -845,7 +847,22 @@ async def async_setup(hass, config):
             recipe["image"] = await _recipe_image(search) or recipe.get("image")
         elif not recipe.get("image") and "image" not in call.data:
             recipe["image"] = await _recipe_image(recipe["title"])
-        return await memory.async_save_recipe(recipe, existing["id"] if existing else None)
+        # The coming dinners it changes, with their lines before, to bring the list along
+        before = [(e, _cooked(e, memory)) for e in _coming(memory, existing["id"])] if existing else []
+        on = call.data["dinner"].isoformat() if call.data.get("dinner") else None
+        if on:
+            if (replaced := memory.on(on)) is None:
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN,
+                    translation_key="dinner_not_found",
+                    translation_placeholders={"uid": on},
+                )
+            if all(e is not replaced for e, _ in before):
+                before.append((replaced, _cooked(replaced, memory)))
+        saved = await memory.async_save_recipe(recipe, existing["id"] if existing else None, on=on)
+        if call.data["update_list"] and before:
+            return {**saved, **await _follow_on_list(memory, before)}
+        return saved
 
     async def handle_remove_recipe(call: ServiceCall) -> ServiceResponse:
         memory = _memory_or_raise()
@@ -925,6 +942,83 @@ async def async_setup(hass, config):
             await _sync_or_raise()()
         return [r["text"] for r in rows]
 
+    def _coming(memory: DinnerMemory, recipe_id: str) -> list[dict]:
+        """The dinners of a recipe from today on."""
+        today = dt_util.now().date().isoformat()
+        return [
+            e for e in memory.history
+            if str(e.get("id")) == recipe_id and (e.get("date") or "") >= today
+        ]
+
+    def _has(row: str, line: str) -> bool:
+        return _norm(row) == _norm(line) or covers(row, line)
+
+    async def _follow_on_list(memory: DinnerMemory, before: list[tuple[dict, list[str]]]) -> dict:
+        """Bring the shopping list in line with dinners whose lines changed, given as (dinner,
+        its lines before). New lines go on like planning puts them; the rows a dinner put there
+        for lines it no longer has come off, unless it or another coming dinner still needs them.
+        Only dinners planned onto a list count. A row with an amount keeps it."""
+        data = hass.data[DOMAIN]
+        default_id = data["current_list_id"]
+        options = data.get("current_options") or {}
+        skip = {_norm(n) for n in options.get(CONF_NEVER_ADD, DEFAULT_NEVER_ADD)}
+        today = dt_util.now().date().isoformat()
+        added_rows: list[str] = []
+        removed_rows: list[str] = []
+        sync = False
+        try:
+            for entry, old in before:
+                if not entry.get("list"):
+                    continue
+                new = _cooked(entry, memory)
+                gone = [line for line in old if line not in new]
+                fresh = [line for line in new if line not in old]
+                others = [
+                    e for e in memory.history
+                    if e is not entry and (e.get("date") or "") >= today
+                ]
+
+                def needed(row: str) -> bool:
+                    return any(_has(row, line) for line in new) or any(
+                        row in (e.get("on_list") or [])
+                        or any(_has(row, line) for line in _cooked(e, memory))
+                        for e in others
+                    )
+
+                drop = [
+                    row for row in entry.get("put_on_list") or []
+                    if any(_has(row, line) for line in gone) and not needed(row)
+                ]
+                if drop:
+                    removed_rows += await _remove_list_rows(entry["list"], {_norm(row) for row in drop})
+                planned = []
+                for line in fresh:
+                    name = own_ingredient(line)["ingredient"]
+                    if _norm(name) not in skip:
+                        planned.append({"name": name, "text": line})
+                rows: list[tuple[str, bool]] = []
+                if planned:
+                    async with data.setdefault("sync_lock", asyncio.Lock()):
+                        target, added, _, on_list = await async_add_to_list(
+                            _api_or_raise(), planned, entry["list"], default_id
+                        )
+                    rows = [covered for covered in on_list if covered]
+                    added_rows += added
+                    sync |= bool(added) and list_matches(target, default_id)
+                if drop or rows:
+                    await memory.async_note_rows(
+                        entry,
+                        on_list=[row for row, _ in rows],
+                        put=[row for row, put in rows if put],
+                        drop=drop,
+                    )
+        except IcaError as err:
+            _LOGGER.warning("⚠️ Kunde inte uppdatera inköpslistan efter ändrat recept: %s", err)
+            return {"list_added": added_rows, "list_removed": removed_rows, "list_failed": True}
+        if sync:
+            await _sync_or_raise()()
+        return {"list_added": added_rows, "list_removed": removed_rows}
+
     async def handle_remove_dinner(call: ServiceCall) -> ServiceResponse:
         memory = _memory_or_raise()
         date = call.data["date"].isoformat()
@@ -999,6 +1093,7 @@ async def async_setup(hass, config):
 
     async def handle_set_recipe_variant(call: ServiceCall) -> ServiceResponse:
         memory = _memory_or_raise()
+        before = [(e, _cooked(e, memory)) for e in _coming(memory, str(call.data["recipe"]))]
         variant = await memory.async_set_variant(
             call.data["recipe"],
             omit=_lines(call.data.get("omit")),
@@ -1006,11 +1101,18 @@ async def async_setup(hass, config):
             note=call.data.get("note"),
             title=call.data.get("title"),
         )
-        return {"recipe": call.data["recipe"], "variant": variant}
+        response = {"recipe": call.data["recipe"], "variant": variant}
+        if call.data["update_list"] and before:
+            response |= await _follow_on_list(memory, before)
+        return response
 
     async def handle_remove_recipe_variant(call: ServiceCall) -> ServiceResponse:
         memory = _memory_or_raise()
-        return {"removed": await memory.async_remove_variant(call.data["recipe"])}
+        before = [(e, _cooked(e, memory)) for e in _coming(memory, str(call.data["recipe"]))]
+        response = {"removed": await memory.async_remove_variant(call.data["recipe"])}
+        if call.data["update_list"] and before:
+            response |= await _follow_on_list(memory, before)
+        return response
 
     async def handle_clear_memory(call: ServiceCall) -> ServiceResponse:
         memory = _memory_or_raise()
@@ -1065,6 +1167,8 @@ async def async_setup(hass, config):
             vol.Optional("url"): cv.string,
             vol.Optional("image"): cv.string,
             vol.Optional("image_search"): cv.string,
+            vol.Optional("dinner"): cv.date,
+            vol.Optional("update_list", default=False): cv.boolean,
         }),
         supports_response=SupportsResponse.OPTIONAL,
     )
@@ -1143,6 +1247,7 @@ async def async_setup(hass, config):
             vol.Optional("add"): vol.Any(cv.string, [cv.string]),
             vol.Optional("note"): cv.string,
             vol.Optional("title"): cv.string,
+            vol.Optional("update_list", default=False): cv.boolean,
         }),
         supports_response=SupportsResponse.OPTIONAL,
     )
@@ -1150,7 +1255,10 @@ async def async_setup(hass, config):
         DOMAIN,
         "remove_recipe_variant",
         handle_remove_recipe_variant,
-        schema=vol.Schema({vol.Required("recipe"): recipe_id_schema}),
+        schema=vol.Schema({
+            vol.Required("recipe"): recipe_id_schema,
+            vol.Optional("update_list", default=False): cv.boolean,
+        }),
         supports_response=SupportsResponse.OPTIONAL,
     )
     hass.services.async_register(

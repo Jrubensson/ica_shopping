@@ -196,6 +196,15 @@ save_recipe:
       example: "potatis purjolökssoppa"
       selector:
         text:
+    dinner:
+      description: "Also put the recipe on this day's dinner in place of what is there, keeping its shopping list rows"
+      selector:
+        date:
+    update_list:
+      description: "Also bring the shopping list along for the coming dinners of it: new lines on, rows for lines it no longer has off"
+      default: false
+      selector:
+        boolean:
 
 remove_recipe:
   description: "Remove one of the household's own recipes; dinners already planned with it stay"
@@ -348,6 +357,11 @@ set_recipe_variant:
       description: "The recipe's title, when it isn't in the dinner memory"
       selector:
         text:
+    update_list:
+      description: "Also bring the shopping list along for the coming dinners of it: new lines on, rows for lines it no longer has off"
+      default: false
+      selector:
+        boolean:
 
 remove_recipe_variant:
   description: "Go back to ICA's own recipe"
@@ -358,6 +372,11 @@ remove_recipe_variant:
       required: true
       selector:
         text:
+    update_list:
+      description: "Also bring the shopping list along for the coming dinners of it: new lines on, rows for lines it no longer has off"
+      default: false
+      selector:
+        boolean:
 
 clear_memory:
   description: "Empty the dinner memory (history and/or preferences)"

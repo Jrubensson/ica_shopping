@@ -426,24 +426,43 @@ class DinnerMemory:
         wanted = ref.lower()
         return next((r for r in self.own_recipes.values() if (r.get("title") or "").lower() == wanted), None)
 
-    async def async_save_recipe(self, recipe: dict, recipe_id: str | None = None) -> dict:
+    async def async_save_recipe(
+        self, recipe: dict, recipe_id: str | None = None, on: str | None = None
+    ) -> dict:
         """Save an own recipe, or replace the one with `recipe_id`. Coming dinners of it show
-        the new version; the list stays as it is. Raises KeyError for an unknown `recipe_id`."""
+        the new version. With `on` (a date), the recipe also takes the place of that day's
+        dinner, which keeps its shopping list rows. Raises KeyError for an unknown `recipe_id`."""
         if recipe_id is not None and recipe_id not in self.own_recipes:
             raise KeyError(recipe_id)
         recipe_id = recipe_id or f"{OWN_ID_PREFIX}{uuid.uuid4().hex[:8]}"
         saved = {"id": recipe_id, **{k: v for k, v in recipe.items() if v not in (None, "", [])}}
         self.own_recipes[recipe_id] = saved
         today = dt_util.now().date().isoformat()
+        replaced = self.on(on) if on else None
         for entry in self.history:
-            if entry.get("id") == recipe_id and (entry.get("date") or "") >= today:
+            if entry is replaced or (entry.get("id") == recipe_id and (entry.get("date") or "") >= today):
                 entry.update(
+                    id=recipe_id,
                     title=saved["title"],
                     ingredients=list(saved.get("ingredients") or []),
                     cooking_time=saved.get("cooking_time"),
+                    url=saved.get("url"),
                 )
         await self._async_save()
         return saved
+
+    async def async_note_rows(
+        self, entry: dict, on_list: list[str] = (), put: list[str] = (), drop: list[str] = ()
+    ) -> None:
+        """Change the list rows a dinner needs (on_list) and the ones it put there."""
+        for key, new in (("on_list", on_list), ("put_on_list", put)):
+            rows = [row for row in entry.get(key) or [] if row not in drop]
+            rows += [row for row in new if row not in rows]
+            if rows:
+                entry[key] = rows
+            else:
+                entry.pop(key, None)
+        await self._async_save()
 
     async def async_remove_recipe(self, ref: str) -> dict | None:
         """Remove an own recipe; dinners already planned with it stay."""

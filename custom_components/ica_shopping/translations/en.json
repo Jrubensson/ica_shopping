@@ -293,6 +293,10 @@
         "title": {
           "name": "Title",
           "description": "The recipe's title, when it isn't in the dinner memory."
+        },
+        "update_list": {
+          "name": "Update the shopping list",
+          "description": "Also bring the shopping list along for the coming dinners of it: new lines on, rows for lines it no longer has off."
         }
       }
     },
@@ -303,6 +307,10 @@
         "recipe": {
           "name": "Recipe",
           "description": "The ICA recipe id."
+        },
+        "update_list": {
+          "name": "Update the shopping list",
+          "description": "Also bring the shopping list along for the coming dinners of it: new lines on, rows for lines it no longer has off."
         }
       }
     },
@@ -441,6 +449,14 @@
         "image_search": {
           "name": "Picture search",
           "description": "Search ICA's recipes for this instead of the title to find the picture."
+        },
+        "update_list": {
+          "name": "Update the shopping list",
+          "description": "Also bring the shopping list along for the coming dinners of it: new lines on, rows for lines it no longer has off."
+        },
+        "dinner": {
+          "name": "Dinner",
+          "description": "Also put the recipe on this day's dinner in place of what is there, keeping its shopping list rows."
         }
       }
     },

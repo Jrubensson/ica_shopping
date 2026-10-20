@@ -377,6 +377,8 @@ When `plan_dinners` puts a dinner's ingredients on the list, the memory notes wh
 
 `remove_dinner` uses it to clean up: the rows the plan put there come off the list again, except those another coming dinner needs, noted or by its words (they become that dinner's to remove), and those already checked off. Pass `update_list: false` to leave the list as it is. A summed row stays as it is rather than shrinking. `move_dinner` swaps two days in one go. Both change the memory, so the Dinners calendar follows; the **Default calendar** does not.
 
+Changing a recipe can bring the list along: pass `update_list: true` to `save_recipe`, `set_recipe_variant` or `remove_recipe_variant`, and for the coming dinners of the recipe that were planned onto a list, new lines go on the list like planning puts them, and the rows a dinner put there for lines it no longer has come off, unless it or another coming dinner still needs them. A row with an amount keeps it: changing "2 dl grädde" to "3 dl grädde" leaves the row as it is. `save_recipe` with `dinner: <date>` also puts the recipe on that day's dinner in place of what is there, keeping its rows, which is how an ICA dinner becomes an own recipe to change.
+
 ## Assist tools
 
 On Home Assistant 2026.8 and newer the integration contributes its own tools to Assist through the `llm` platform, so any voice assistant or LLM conversation agent can use them directly - no scripts, blueprints or YAML to copy. Ask *"what is on offer?"* or *"what should we eat this week?"* and the agent can answer.

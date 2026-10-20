@@ -151,7 +151,7 @@ _AMOUNT = re.compile(
 _FRACTIONS = {"½": 0.5, "¼": 0.25, "¾": 0.75}
 
 
-def _own_ingredient(line: str) -> dict:
+def own_ingredient(line: str) -> dict:
     """An own recipe's line in the shape ICA's ingredients have, so equal amounts add up with
     other recipes': "2 dl grädde" → 2, "dl", "grädde". A line without an amount stays whole."""
     line = line.strip()
@@ -177,7 +177,7 @@ def own_recipe(recipe: dict) -> dict:
         "cookingTime": recipe.get("cooking_time"),
         "url": recipe.get("url"),
         "ingredientGroups": [
-            {"ingredients": [_own_ingredient(line) for line in recipe.get("ingredients") or [] if line.strip()]}
+            {"ingredients": [own_ingredient(line) for line in recipe.get("ingredients") or [] if line.strip()]}
         ],
     }
 
@@ -415,7 +415,7 @@ async def async_resolve_or_create_list(api: ICAApi, ref: str | None, default_id:
     return await api.async_create_list(ref.strip())
 
 
-async def _async_add_to_list(
+async def async_add_to_list(
     api: ICAApi, planned: list[dict], list_ref: str | None, default_list_id: str
 ) -> tuple[dict, list[str], list[str], list[tuple[str, bool] | None]]:
     """Add the planned ingredients to the list.
@@ -581,7 +581,7 @@ async def async_plan_dinners(
         }
 
     async with list_lock or contextlib.nullcontext():
-        target, added, skipped, on_list = await _async_add_to_list(api, planned, list_ref, default_list_id)
+        target, added, skipped, on_list = await async_add_to_list(api, planned, list_ref, default_list_id)
     for dinner, rows in zip(dinners, _rows_per_dinner(cooked, planned, on_list)):
         dinner.update({key: value for key, value in rows.items() if value})
 

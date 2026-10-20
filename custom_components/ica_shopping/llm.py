@@ -279,6 +279,14 @@ class SaveRecipeTool(_ServiceTool):
                 "image_search",
                 description="What to search ICA's recipes for to find a picture, when the title is a poor search term.",
             ): str,
+            _Optional(
+                "update_list",
+                description=(
+                    "true also brings the shopping list along for the coming dinners of the recipe: "
+                    "new lines on, rows for removed lines off. Use it when the user wants the list "
+                    "to follow the change."
+                ),
+            ): bool,
         }
     )
 
@@ -373,6 +381,14 @@ class SetRecipeVariantTool(_ServiceTool):
             ): [str],
             _Optional("add", description="Lines to add, e.g. '2 morötter, rivna'."): [str],
             _Optional("note", description="A short note, e.g. 'dubbel sats'."): str,
+            _Optional(
+                "update_list",
+                description=(
+                    "true also brings the shopping list along for the coming dinners of the recipe: "
+                    "new lines on, rows for removed lines off. Use it when the user wants the list "
+                    "to follow the change."
+                ),
+            ): bool,
         }
     )
 
