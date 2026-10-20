@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock, patch
 
 from custom_components.ica_shopping.const import DATA_ICA, DOMAIN
 
-from .test_list_dinners import FakeList, _call, iso, setup  # noqa: F401
+from .list_helpers import FakeList, _call, iso
 
 
 async def _commit(hass, **data):
@@ -130,3 +130,61 @@ async def test_a_struck_row_does_not_count_as_on_the_list(hass, setup):
     response = await _call(hass, "plan_dinners", recipes="1,2", preview=True)
 
     assert all("on_list" not in g for g in response["ingredient_groups"])
+
+
+async def test_a_recipe_change_leaves_off_what_the_household_has(hass, setup):
+    the_list = FakeList()
+    memory = await setup(the_list)
+    await _commit(hass, start_date=iso(1), items=["pasta"])
+    assert memory.on(iso(1))["left_off"] == ["vispgrädde", "Lök"]
+    assert "left_off" not in memory.as_dict()["history"][0]
+
+    response = await _call(
+        hass, "set_recipe_variant", recipe="1", omit=["3 dl vispgrädde"],
+        add=["4 dl vispgrädde", "2 morötter"], update_list=True,
+    )
+
+    # The cream is still at home; only the new carrots go on
+    assert response["list_added"] == ["2 morötter"]
+    assert the_list.texts() == ["400 g pasta", "2 morötter"]
+
+
+async def test_a_saved_dinner_gets_the_list_even_without_rows(hass, setup):
+    the_list = FakeList()
+    memory = await setup(the_list)
+    await _commit(hass, start_date=iso(1), add_to_list=False)
+
+    await _commit(hass, items=["pasta"])
+
+    soppa = memory.on(iso(2))
+    assert soppa["list"] == "Handla" and "put_on_list" not in soppa
+    assert soppa["left_off"] == ["Vispgrädde", "Lök"]
+    response = await _call(hass, "set_recipe_variant", recipe="2", add=["2 morötter"], update_list=True)
+    assert response["list_added"] == ["2 morötter"]
+
+
+async def test_shopping_everything_later_clears_what_was_left_off(hass, setup):
+    the_list = FakeList()
+    memory = await setup(the_list)
+    await _commit(hass, start_date=iso(1), items=["pasta"])
+
+    await _commit(hass, start_date=iso(1))
+
+    assert all("left_off" not in e for e in memory.history)
+    assert "4.5 dl vispgrädde" in memory.on(iso(1))["put_on_list"]
+
+
+async def test_a_dinner_with_the_pasta_at_home_does_not_keep_the_row(hass, setup):
+    the_list = FakeList()
+    memory = await setup(the_list)
+    with patch("custom_components.ica_shopping._pick_calendar", return_value=None):
+        await _call(hass, "plan_dinners", recipes="1", start_date=iso(1))
+        await _call(hass, "plan_dinners", recipes="1", start_date=iso(2), items=["Lök"])
+    assert memory.on(iso(2))["left_off"] == ["vispgrädde", "pasta"]
+
+    response = await _call(hass, "remove_dinner", date=iso(1))
+
+    # The second pasta dinner has its pasta at home, so it doesn't take the row over
+    assert "400 g pasta" in response["list_removed"]
+    assert "400 g pasta" not in the_list.texts()
+    assert "400 g pasta" not in (memory.on(iso(2)).get("put_on_list") or [])

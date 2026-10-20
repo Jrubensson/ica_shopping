@@ -27,6 +27,8 @@ HISTORY_MAX = 300
 HISTORY_MAX_AGE_DAYS = 120
 # A dinner's shopping list rows: all it needs, and the ones planning it put there
 LIST_KEYS = ("on_list", "put_on_list")
+# The ingredients the household chose not to shop for when the dinner went on a list
+LEFT_OFF_KEY = "left_off"
 # Ids of dinners without an ICA recipe; never an "@", since calendar uids are "<id>@<date>".
 CUSTOM_ID_PREFIX = "custom-"
 
@@ -150,11 +152,18 @@ class DinnerMemory:
             if key in known:
                 # Planned again: its rows on the list may have changed
                 entry = self.find(str(recipe_id), date)
-                if _merge_rows(entry, dinner):
-                    changed = True
+                changed |= _merge_rows(entry, dinner)
+                if entry is not None and list_name:
                     # Saved without the list before, so removing it would look on the wrong one
-                    if entry.get("list") is None and list_name:
+                    if entry.get("list") is None:
                         entry["list"] = list_name
+                        changed = True
+                    if entry.get(LEFT_OFF_KEY) != dinner.get(LEFT_OFF_KEY):
+                        if dinner.get(LEFT_OFF_KEY):
+                            entry[LEFT_OFF_KEY] = list(dinner[LEFT_OFF_KEY])
+                        else:
+                            entry.pop(LEFT_OFF_KEY, None)
+                        changed = True
                 continue
             if date in taken:
                 _LOGGER.debug("🍽️ %s har redan en middag – hoppar över %s", date, recipe_id)
@@ -171,7 +180,7 @@ class DinnerMemory:
                     # Rules the user overrode by asking for this dish (räkor in a räkpasta)
                     **({"keep": dinner["keep"]} if dinner.get("keep") else {}),
                     # The shopping list rows it needs, and the ones planning it put there
-                    **{k: list(dinner[k]) for k in LIST_KEYS if dinner.get(k)},
+                    **{k: list(dinner[k]) for k in (*LIST_KEYS, LEFT_OFF_KEY) if dinner.get(k)},
                 }
             )
             known.add(key)
@@ -498,7 +507,7 @@ class DinnerMemory:
     def as_dict(self) -> dict:
         # Ingredients are for the calendar and list rows for the dashboard; leaving them out
         # keeps GetMemory small for the LLM.
-        hidden = {"ingredients", *LIST_KEYS}
+        hidden = {"ingredients", *LIST_KEYS, LEFT_OFF_KEY}
         history = [{k: v for k, v in e.items() if k not in hidden} for e in self.history]
         return {
             "history": sorted(history, key=lambda e: e.get("date") or "", reverse=True),

@@ -370,7 +370,7 @@
         },
         "items": {
           "name": "Ingredienser att lägga till",
-          "description": "Lägg bara dessa ingredienser på listan: namn från en förhandsgransknings ingredient_groups, en per rad. Resten lämnas utanför den här gången. Utelämna för att lägga till allt; en tom lista lägger inte till något."
+          "description": "Lägg bara dessa ingredienser på listan: namn från en förhandsgransknings ingredient_groups, en per rad. Resten lämnas utanför, även när ett recept ändras senare med update_list. Utelämna för att lägga till allt; en tom lista lägger inte till något."
         },
         "avoid_days": {
           "name": "Undvik senaste dagarna",

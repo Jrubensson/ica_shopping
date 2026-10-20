@@ -67,7 +67,7 @@ plan_dinners:
       selector:
         text:
     items:
-      description: "Only put these ingredients on the list: names from a preview's ingredient_groups, as a list or one per line. The rest are left off this time. Leave out to add everything; an empty list adds nothing."
+      description: "Only put these ingredients on the list: names from a preview's ingredient_groups, as a list or one per line. The rest are left off, and a later recipe change with update_list leaves them off too. Leave out to add everything; an empty list adds nothing."
       example: "vispgrädde\npasta"
       selector:
         text:

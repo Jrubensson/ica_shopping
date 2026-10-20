@@ -49,7 +49,7 @@ from .ica_api import (
     parse_bonus,
     pick_store,
 )
-from .memory import HISTORY_MAX_AGE_DAYS, DayTakenError, DinnerMemory, DinnerTooOldError
+from .memory import HISTORY_MAX_AGE_DAYS, LEFT_OFF_KEY, DayTakenError, DinnerMemory, DinnerTooOldError
 from .recipes import (
     SOURCE_FAVORITES,
     SOURCE_OWN,
@@ -957,6 +957,15 @@ async def async_setup(hass, config):
     def _has(row: str, line: str) -> bool:
         return _norm(row) == _norm(line) or covers(row, line)
 
+    def _at_home(entry: dict, line: str) -> bool:
+        """Whether the household left this line's ingredient off when it shopped for the dinner."""
+        name = own_ingredient(line)["ingredient"]
+        return any(_norm(n) == _norm(name) or _has(n, line) for n in entry.get(LEFT_OFF_KEY) or [])
+
+    def _needs(entry: dict, memory: DinnerMemory) -> list[str]:
+        """A dinner's lines as cooked, less those it has at home."""
+        return [line for line in _cooked(entry, memory) if not _at_home(entry, line)]
+
     async def _follow_on_list(memory: DinnerMemory, before: list[tuple[dict, list[str]]]) -> dict:
         """Bring the shopping list in line with dinners whose lines changed, given as (dinner,
         its lines before). New lines go on like planning puts them; the rows a dinner put there
@@ -985,7 +994,7 @@ async def async_setup(hass, config):
                 def needed(row: str) -> bool:
                     return any(_has(row, line) for line in new) or any(
                         row in (e.get("on_list") or [])
-                        or any(_has(row, line) for line in _cooked(e, memory))
+                        or any(_has(row, line) for line in _needs(e, memory))
                         for e in others
                     )
 
@@ -998,7 +1007,7 @@ async def async_setup(hass, config):
                 planned = []
                 for line in fresh:
                     name = own_ingredient(line)["ingredient"]
-                    if _norm(name) not in skip:
+                    if _norm(name) not in skip and not _at_home(entry, line):
                         planned.append({"name": name, "text": line})
                 rows: list[tuple[str, bool]] = []
                 if planned:
@@ -1045,7 +1054,7 @@ async def async_setup(hass, config):
             needed = {
                 row: [
                     e for e in others
-                    if row in (e.get("on_list") or []) or any(covers(row, line) for line in _cooked(e, memory))
+                    if row in (e.get("on_list") or []) or any(covers(row, line) for line in _needs(e, memory))
                 ]
                 for row in entry["put_on_list"]
             }

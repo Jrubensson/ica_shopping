@@ -11,7 +11,7 @@ from typing import Iterable
 from .const import MAX_ICA_ITEMS, RECIPE_IMAGE_BASE
 from .ica_api import ICAApi, IcaApiError, IcaError, list_matches
 from .matching import covers
-from .memory import is_custom_id, is_own_id
+from .memory import LEFT_OFF_KEY, is_custom_id, is_own_id
 from .products import async_match_products
 from .rules import LEVEL_NEVER, adjust, fold, is_theme, mentions, touched_rules
 
@@ -476,11 +476,11 @@ async def async_add_to_list(
     on_list: list[tuple[str, bool] | None] = []
     for ing in planned:
         name_key, text_key = norm(ing["name"]), norm(ing["text"])
-        if (key := next((k for k in (name_key, text_key) if k in present), None)) is not None:
-            on_list.append(None if present[key] is None else (present[key], False))
+        # Shares a row with an ingredient left off a full list
+        if any(k in present and present[k] is None for k in (name_key, text_key)):
+            on_list.append(None)
             continue
-        # A row worded otherwise may have it already: "Varmkorv" for "8 varmkorvar"
-        if (row := next((t for t in present.values() if t and covers(t, ing["text"])), None)) is not None:
+        if (row := covering_row((t for t in present.values() if t), ing)) is not None:
             on_list.append((row, False))
             continue
         # Reuse a checked-off row instead of adding a duplicate next to it.
@@ -578,8 +578,9 @@ async def async_plan_dinners(
     Once the list is updated, each dinner has the rows it is on in "on_list", and the ones this
     plan put there in "put_on_list", so removing the dinner can take them off again.
     `items` (ingredient group names, any case) limits what goes on the list to those; the rest
-    are left off this time only. A preview's ingredient groups then still has them all, and
-    each group says which row already covers it in "on_list".
+    are left off this time only, and each dinner names its own in "left_off". A preview's
+    ingredient groups then still has them all, and each group says which row already covers it
+    in "on_list".
     """
     rules = list(rules)
     recipes = await async_fetch_recipes(api, count, source, recipe_ids, avoid_ids, rules, own_recipes)
@@ -639,6 +640,12 @@ async def async_plan_dinners(
         target, added, skipped, on_list = await async_add_to_list(api, planned, list_ref, default_list_id)
     for dinner, rows in zip(dinners, _rows_per_dinner(cooked, planned, on_list)):
         dinner.update({key: value for key, value in rows.items() if value})
+    if left_off:
+        # So a later recipe change doesn't put back what the household said it has
+        for dinner, recipe in zip(dinners, cooked):
+            names = [_ingredient_name(ing) for ing in _ingredients(recipe) if norm(_ingredient_name(ing)) in left_off]
+            if names := list(dict.fromkeys(names)):
+                dinner[LEFT_OFF_KEY] = names
 
     return target, recipes, {
         "list": target.get("name"),
