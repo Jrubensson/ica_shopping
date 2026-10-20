@@ -49,7 +49,7 @@ from .ica_api import (
     parse_bonus,
     pick_store,
 )
-from .memory import HISTORY_MAX_AGE_DAYS, DayTakenError, DinnerMemory, DinnerTooOldError, is_own_id
+from .memory import HISTORY_MAX_AGE_DAYS, DayTakenError, DinnerMemory, DinnerTooOldError
 from .recipes import (
     SOURCE_FAVORITES,
     SOURCE_OWN,
@@ -57,9 +57,11 @@ from .recipes import (
     NoRecipesError,
     async_plan_dinners,
     entry_description,
+    cooked_lines,
     norm as _norm,
     search_summary,
 )
+from .matching import covers
 from .rules import LEVEL_OMIT, LEVELS
 
 _LOGGER = logging.getLogger(__name__)
@@ -860,14 +862,40 @@ async def async_setup(hass, config):
     def _summary(entry: dict) -> dict:
         return {"id": entry.get("id"), "title": entry.get("title"), "date": entry.get("date")}
 
+    def _cooked(entry: dict, memory: DinnerMemory) -> list[str]:
+        """A remembered dinner's lines as it will be cooked: food rules and our version applied."""
+        return cooked_lines(entry, memory.food_rules, memory.variants)
+
+    async def _todo_rows() -> list[str]:
+        todo_entity = hass.data[DOMAIN].get("todo_entity")
+        if not todo_entity:
+            return []
+        try:
+            result = await hass.services.async_call(
+                "todo", "get_items", {"entity_id": todo_entity}, blocking=True, return_response=True
+            )
+        except HomeAssistantError:
+            return []
+        return [
+            item["summary"]
+            for item in result.get(todo_entity, {}).get("items", [])
+            if isinstance(item, dict) and item.get("summary")
+        ]
+
     async def handle_get_list_dinners(call: ServiceCall) -> ServiceResponse:
         today = dt_util.now().date().isoformat()
         memory = _memory_or_raise()
-        dinners = [
-            {**_summary(e), "on_list": list(e["on_list"])}
-            for e in memory.history
-            if (e.get("date") or "") >= today and e.get("on_list")
-        ]
+        rows = await _todo_rows()
+        dinners = []
+        for entry in memory.history:
+            if (entry.get("date") or "") < today:
+                continue
+            # The rows planning noted, and any other row that has one of its ingredients
+            lines = _cooked(entry, memory)
+            found = list(entry.get("on_list") or [])
+            found += [row for row in rows if row not in found and any(covers(row, line) for line in lines)]
+            if found:
+                dinners.append({**_summary(entry), "on_list": found})
         return {"dinners": sorted(dinners, key=lambda d: d["date"])}
 
     async def _remove_list_rows(list_name: str | None, drop: set[str]) -> list[str]:
@@ -909,16 +937,29 @@ async def async_setup(hass, config):
             )
         removed_rows: list[str] = []
         if call.data["update_list"] and entry.get("put_on_list"):
-            # Rows another coming dinner needs stay, and become that dinner's to remove.
-            needed = memory.rows_needed(dt_util.now().date().isoformat(), but=entry)
-            put = {_norm(row) for row in entry["put_on_list"]}
+            # Rows another coming dinner needs stay, and become that dinner's to remove: noted
+            # when it was planned, or worded so they have one of its ingredients.
+            today = dt_util.now().date().isoformat()
+            others = [
+                e for e in memory.history
+                if e is not entry and (e.get("date") or "") >= today
+            ]
+            needed = {
+                row: [
+                    e for e in others
+                    if row in (e.get("on_list") or []) or any(covers(row, line) for line in _cooked(e, memory))
+                ]
+                for row in entry["put_on_list"]
+            }
+            needed = {row: entries for row, entries in needed.items() if entries}
+            drop = {_norm(row) for row in entry["put_on_list"] if row not in needed}
             try:
-                removed_rows = await _remove_list_rows(entry.get("list"), put - needed.keys())
+                removed_rows = await _remove_list_rows(entry.get("list"), drop)
             except IcaError as err:
                 raise HomeAssistantError(
                     translation_domain=DOMAIN, translation_key="list_update_failed"
                 ) from err
-            await memory.async_hand_over({row: needed[row] for row in put & needed.keys()})
+            await memory.async_hand_over(needed)
         await memory.async_remove_on(date)
         return {"removed": _summary(entry), "list_removed": removed_rows}
 
@@ -1202,6 +1243,7 @@ async def async_setup_entry(hass, entry):
     hass.data[DOMAIN]["memory"] = await DinnerMemory(hass).async_load()
 
     todo_entity = entry.options.get("todo_entity_id", entry.data.get("todo_entity_id"))
+    hass.data[DOMAIN]["todo_entity"] = todo_entity
     if not todo_entity:
         _LOGGER.error("❌ Ingen todo-entity vald – integrationen kan inte synka.")
         return False

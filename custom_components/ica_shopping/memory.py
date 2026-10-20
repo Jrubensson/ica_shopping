@@ -354,16 +354,6 @@ class DinnerMemory:
         """The dinner planned for `date`, if any."""
         return next((e for e in self.history if e.get("date") == date), None)
 
-    def rows_needed(self, since: str, but: dict | None = None) -> dict[str, list[dict]]:
-        """List rows (lower-cased) the dinners from `since` on need, with those dinners."""
-        needed: dict[str, list[dict]] = {}
-        for entry in self.history:
-            if entry is but or (entry.get("date") or "") < since:
-                continue
-            for row in entry.get("on_list") or []:
-                needed.setdefault(row.strip().lower(), []).append(entry)
-        return needed
-
     async def async_remove_on(self, date: str) -> dict | None:
         """Remove the dinner planned for `date` and return it."""
         entry = self.on(date)
@@ -377,10 +367,9 @@ class DinnerMemory:
         there, so removing them later takes the rows off."""
         for row, entries in rows.items():
             for entry in entries:
-                text = next((r for r in entry.get("on_list") or [] if r.strip().lower() == row), None)
-                put = entry.setdefault("put_on_list", [])
-                if text and text not in put:
-                    put.append(text)
+                for key in LIST_KEYS:
+                    if row not in entry.setdefault(key, []):
+                        entry[key].append(row)
         if rows:
             await self._async_save()
 

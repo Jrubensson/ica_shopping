@@ -10,6 +10,7 @@ from typing import Iterable
 
 from .const import MAX_ICA_ITEMS, RECIPE_IMAGE_BASE
 from .ica_api import ICAApi, IcaApiError, IcaError, list_matches
+from .matching import covers
 from .memory import is_custom_id, is_own_id
 from .products import async_match_products
 from .rules import LEVEL_NEVER, adjust, fold, is_theme, mentions, touched_rules
@@ -198,6 +199,16 @@ def entry_description(entry: dict, rules: Iterable[dict] = (), variants: dict | 
         variant=variant,
         own=entry.get("id") if is_own_id(entry.get("id")) else None,
     )
+
+
+def cooked_lines(entry: dict, rules: Iterable[dict] = (), variants: dict | None = None) -> list[str]:
+    """A remembered dinner's ingredient lines as it will be cooked: what the food rules and the
+    household's own version leave out taken away, and what that version adds put in."""
+    ingredients = entry.get("ingredients") or []
+    variant = (variants or {}).get(str(entry.get("id")))
+    omitted, extra = adjust(ingredients, rules, variant, entry.get("keep") or ())
+    left_out = {o["line"] for o in omitted}
+    return [line for line in ingredients if line not in left_out] + list(extra)
 
 
 def format_description(
@@ -430,8 +441,16 @@ async def _async_add_to_list(
         if (key := next((k for k in (name_key, text_key) if k in present), None)) is not None:
             on_list.append(None if present[key] is None else (present[key], False))
             continue
+        # A row worded otherwise may have it already: "Varmkorv" for "8 varmkorvar"
+        if (row := next((t for t in present.values() if t and covers(t, ing["text"])), None)) is not None:
+            on_list.append((row, False))
+            continue
         # Reuse a checked-off row instead of adding a duplicate next to it.
-        old = struck.pop(text_key, None) or struck.pop(name_key, None)
+        old = (
+            struck.pop(text_key, None)
+            or struck.pop(name_key, None)
+            or struck.pop(next((k for k, r in struck.items() if covers(r["text"], ing["text"])), ""), None)
+        )
         if old is not None:
             if await api.set_striked(target["id"], old["id"], False, row=old.get("raw")):
                 added.append(old["text"])

@@ -2,6 +2,7 @@ import datetime as dt
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from homeassistant.core import SupportsResponse
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
@@ -177,3 +178,79 @@ async def test_planning_again_adds_the_new_rows(hass, setup):
 
     await _plan(hass, iso(1))
     assert memory.on(iso(1))["on_list"] == ["4.5 dl vispgrädde", "400 g pasta", "1 gul lök", "Pasta"]
+
+
+TUNNBROD = _recipe(
+    "3", "Tunnbrödsrulle",
+    _ing("varmkorvar", "8 varmkorvar", 8, None),
+    _ing("bitar mjukt tunnbröd", "4 bitar mjukt tunnbröd", 4, "bitar"),
+    _ing("mjölk (gärna 1,5 %)", "2 dl mjölk (gärna 1,5 %)", 2, "dl"),
+)
+
+
+def _with_tunnbrod(api):
+    api.async_get_recipe = AsyncMock(
+        side_effect=lambda rid: {"1": PASTA, "2": SOPPA, "3": TUNNBROD}[rid]
+    )
+    return api
+
+
+async def _plan_ids(hass, ids, start):
+    with patch("custom_components.ica_shopping._pick_calendar", return_value=None):
+        return await _call(hass, "plan_dinners", recipes=ids, start_date=start)
+
+
+async def test_plan_uses_rows_worded_otherwise(hass, setup):
+    the_list = FakeList("Varmkorv", "Mjukt tunnbröd", "Mjölig potatis")
+    the_list.rows.append({"id": "s", "text": "Mjölk", "isStriked": True})
+    memory = await setup(the_list)
+    _with_tunnbrod(hass.data[DOMAIN][DATA_ICA])
+
+    response = await _plan_ids(hass, "3", iso(1))
+
+    # No "8 varmkorvar" next to "Varmkorv"; the checked-off milk is picked up again
+    assert the_list.texts() == ["Varmkorv", "Mjukt tunnbröd", "Mjölig potatis", "Mjölk"]
+    assert response["dinners"][0]["on_list"] == ["Varmkorv", "Mjukt tunnbröd", "Mjölk"]
+    assert memory.on(iso(1))["put_on_list"] == ["Mjölk"]
+
+
+async def test_list_dinners_finds_rows_typed_by_hand(hass, setup):
+    await setup(FakeList())
+    _with_tunnbrod(hass.data[DOMAIN][DATA_ICA])
+    with patch("custom_components.ica_shopping._pick_calendar", return_value=None):
+        await _call(hass, "plan_dinners", recipes="3", start_date=iso(1), add_to_list=False)
+
+    async def get_items(call):
+        return {"todo.shopping_list": {"items": [
+            {"summary": "Varmkorv", "status": "needs_action"},
+            {"summary": "Kaffe", "status": "needs_action"},
+            {"summary": "Mjölk", "status": "completed"},
+        ]}}
+
+    hass.services.async_register("todo", "get_items", get_items, supports_response=SupportsResponse.ONLY)
+    hass.data[DOMAIN]["todo_entity"] = "todo.shopping_list"
+
+    listed = await _call(hass, "get_list_dinners")
+    assert listed["dinners"] == [
+        {"id": "3", "title": "Tunnbrödsrulle", "date": iso(1), "on_list": ["Varmkorv", "Mjölk"]}
+    ]
+
+
+async def test_remove_dinner_keeps_a_row_another_dinner_needs_by_its_words(hass, setup):
+    the_list = FakeList()
+    memory = await setup(the_list)
+    _with_tunnbrod(hass.data[DOMAIN][DATA_ICA])
+    # Tunnbrödsrulle planned before rows were noted; its milk is the soup's row now
+    await _plan_ids(hass, "3", iso(3))
+    tunnbrod = memory.on(iso(3))
+    del tunnbrod["on_list"], tunnbrod["put_on_list"]
+    the_list.rows = [{"id": "m", "text": "Mjölk", "isStriked": False}]
+    await _plan_ids(hass, "2", iso(1))
+    entry = memory.on(iso(1))
+    entry["put_on_list"].append("Mjölk")
+    entry["on_list"].append("Mjölk")
+
+    response = await _call(hass, "remove_dinner", date=iso(1))
+    assert "Mjölk" not in response["list_removed"]
+    assert "Mjölk" in the_list.texts()
+    assert tunnbrod["put_on_list"] == ["Mjölk"]
