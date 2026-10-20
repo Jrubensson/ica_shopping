@@ -1,6 +1,7 @@
 import asyncio
 import datetime as dt
 import logging
+import re
 import time
 from typing import Iterable
 
@@ -48,9 +49,10 @@ from .ica_api import (
     parse_bonus,
     pick_store,
 )
-from .memory import HISTORY_MAX_AGE_DAYS, DayTakenError, DinnerMemory, DinnerTooOldError
+from .memory import HISTORY_MAX_AGE_DAYS, DayTakenError, DinnerMemory, DinnerTooOldError, is_own_id
 from .recipes import (
     SOURCE_FAVORITES,
+    SOURCE_OWN,
     SOURCE_RANDOM,
     NoRecipesError,
     async_plan_dinners,
@@ -654,6 +656,7 @@ async def async_setup(hass, config):
                 list_lock=data.setdefault("sync_lock", asyncio.Lock()),
                 rules=memory.food_rules if memory is not None else (),
                 variants=memory.variants if memory is not None else None,
+                own_recipes=memory.own_recipes if memory is not None else None,
             )
         except NoRecipesError as err:
             raise HomeAssistantError(
@@ -798,6 +801,146 @@ async def async_setup(hass, config):
                 ) from err
         return {"id": entry["id"], "title": entry["title"], "date": entry["date"]}
 
+    # --- The household's own recipes, planned like ICA's ---------------------------------
+    def _recipe_not_found(ref: str) -> HomeAssistantError:
+        return HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="recipe_not_found",
+            translation_placeholders={"recipe": ref},
+        )
+
+    async def _recipe_image(query: str) -> str | None:
+        """The picture of ICA's best match for `query`. Close enough for a dish of our own:
+        a bowl of soup looks the same whoever made it."""
+        api = hass.data.get(DOMAIN, {}).get(DATA_ICA)
+        if api is None:
+            return None
+        try:
+            found = await api.async_search_recipes(query, limit=1)
+        except IcaError as err:
+            _LOGGER.debug("🖼️ Ingen bild för '%s': %s", query, err)
+            return None
+        return search_summary(found[0])["image"] if found else None
+
+    async def handle_save_recipe(call: ServiceCall) -> ServiceResponse:
+        memory = _memory_or_raise()
+        ref = call.data.get("recipe")
+        existing = memory.find_recipe(ref) if ref else None
+        if ref and existing is None:
+            raise _recipe_not_found(ref)
+        # Fields left out of an update keep their value; an empty one clears it.
+        given = {key: call.data[key] for key in ("title", "note", "cooking_time", "portions", "url", "image") if key in call.data}
+        for key in ("ingredients", "steps"):
+            if key in call.data:
+                given[key] = _lines(call.data[key])
+        if "steps" in given:
+            # Numbered by whoever shows them
+            given["steps"] = [re.sub(r"^\d+[.)]\s*", "", step) for step in given["steps"]]
+        recipe = {key: value for key, value in (existing or {}).items() if key != "id"} | given
+        if not recipe.get("title"):
+            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="recipe_needs_title")
+        if search := call.data.get("image_search"):
+            recipe["image"] = await _recipe_image(search) or recipe.get("image")
+        elif not recipe.get("image") and "image" not in call.data:
+            recipe["image"] = await _recipe_image(recipe["title"])
+        return await memory.async_save_recipe(recipe, existing["id"] if existing else None)
+
+    async def handle_remove_recipe(call: ServiceCall) -> ServiceResponse:
+        memory = _memory_or_raise()
+        removed = await memory.async_remove_recipe(call.data["recipe"])
+        if removed is None:
+            raise _recipe_not_found(call.data["recipe"])
+        return {"removed": removed}
+
+    async def handle_get_own_recipes(call: ServiceCall) -> ServiceResponse:
+        recipes = _memory_or_raise().own_recipes.values()
+        return {"recipes": sorted(recipes, key=lambda r: (r.get("title") or "").lower())}
+
+    # --- The week menu: which list rows each dinner needs, moving and removing dinners ---
+    def _summary(entry: dict) -> dict:
+        return {"id": entry.get("id"), "title": entry.get("title"), "date": entry.get("date")}
+
+    async def handle_get_list_dinners(call: ServiceCall) -> ServiceResponse:
+        today = dt_util.now().date().isoformat()
+        memory = _memory_or_raise()
+        dinners = [
+            {**_summary(e), "on_list": list(e["on_list"])}
+            for e in memory.history
+            if (e.get("date") or "") >= today and e.get("on_list")
+        ]
+        return {"dinners": sorted(dinners, key=lambda d: d["date"])}
+
+    async def _remove_list_rows(list_name: str | None, drop: set[str]) -> list[str]:
+        """Take the unchecked rows in `drop` (lower-cased) off the list the dinner was planned
+        on, and pass the change on to the to-do entity. Returns the rows removed."""
+        api = _api_or_raise()
+        data = hass.data[DOMAIN]
+        default_id = data["current_list_id"]
+        async with data.setdefault("sync_lock", asyncio.Lock()):
+            lists = await api.async_get_lists()
+            if list_name:
+                target = next((L for L in lists if _norm(L.get("name")) == _norm(list_name)), None)
+            else:
+                target = next((L for L in lists if list_matches(L, default_id)), None)
+            if target is None:
+                return []
+            target = await api.async_get_list(target["id"]) or target
+            rows = [
+                r for r in target.get("rows", [])
+                if r.get("id") and not r.get("isStriked") and _norm(r.get("text")) in drop
+            ]
+            if rows and not await api.remove_items(target["id"], [r["id"] for r in rows]):
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN, translation_key="list_update_failed"
+                )
+        if rows and list_matches(target, default_id):
+            await _sync_or_raise()()
+        return [r["text"] for r in rows]
+
+    async def handle_remove_dinner(call: ServiceCall) -> ServiceResponse:
+        memory = _memory_or_raise()
+        date = call.data["date"].isoformat()
+        entry = memory.on(date)
+        if entry is None:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="dinner_not_found",
+                translation_placeholders={"uid": date},
+            )
+        removed_rows: list[str] = []
+        if call.data["update_list"] and entry.get("put_on_list"):
+            # Rows another coming dinner needs stay, and become that dinner's to remove.
+            needed = memory.rows_needed(dt_util.now().date().isoformat(), but=entry)
+            put = {_norm(row) for row in entry["put_on_list"]}
+            try:
+                removed_rows = await _remove_list_rows(entry.get("list"), put - needed.keys())
+            except IcaError as err:
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN, translation_key="list_update_failed"
+                ) from err
+            await memory.async_hand_over({row: needed[row] for row in put & needed.keys()})
+        await memory.async_remove_on(date)
+        return {"removed": _summary(entry), "list_removed": removed_rows}
+
+    async def handle_move_dinner(call: ServiceCall) -> ServiceResponse:
+        memory = _memory_or_raise()
+        date, to = call.data["date"].isoformat(), call.data["to"].isoformat()
+        if memory.on(date) is None:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="dinner_not_found",
+                translation_placeholders={"uid": date},
+            )
+        try:
+            moved = await memory.async_move(date, to)
+        except DinnerTooOldError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="dinner_too_old",
+                translation_placeholders={"date": str(err), "days": str(HISTORY_MAX_AGE_DAYS)},
+            ) from err
+        return {"moved": [_summary(e) for e in moved]}
+
     async def handle_set_food_rule(call: ServiceCall) -> ServiceResponse:
         memory = _memory_or_raise()
         rule = await memory.async_set_food_rule(
@@ -864,6 +1007,54 @@ async def async_setup(hass, config):
             vol.Optional("recipe"): cv.string,
             vol.Optional("date"): cv.string,
         }),
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        "save_recipe",
+        handle_save_recipe,
+        schema=vol.Schema({
+            vol.Optional("recipe"): cv.string,
+            vol.Optional("title"): vol.All(cv.string, vol.Strip, vol.Length(min=1)),
+            vol.Optional("ingredients"): vol.Any(cv.string, [cv.string]),
+            vol.Optional("steps"): vol.Any(cv.string, [cv.string]),
+            vol.Optional("note"): cv.string,
+            vol.Optional("cooking_time"): cv.string,
+            vol.Optional("portions"): cv.string,
+            vol.Optional("url"): cv.string,
+            vol.Optional("image"): cv.string,
+            vol.Optional("image_search"): cv.string,
+        }),
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        "remove_recipe",
+        handle_remove_recipe,
+        schema=vol.Schema({vol.Required("recipe"): cv.string}),
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN, "get_own_recipes", handle_get_own_recipes, supports_response=SupportsResponse.ONLY
+    )
+    hass.services.async_register(
+        DOMAIN, "get_list_dinners", handle_get_list_dinners, supports_response=SupportsResponse.ONLY
+    )
+    hass.services.async_register(
+        DOMAIN,
+        "remove_dinner",
+        handle_remove_dinner,
+        schema=vol.Schema({
+            vol.Required("date"): cv.date,
+            vol.Optional("update_list", default=True): cv.boolean,
+        }),
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        "move_dinner",
+        handle_move_dinner,
+        schema=vol.Schema({vol.Required("date"): cv.date, vol.Required("to"): cv.date}),
         supports_response=SupportsResponse.OPTIONAL,
     )
     hass.services.async_register(
@@ -938,7 +1129,7 @@ async def async_setup(hass, config):
         handle_plan_dinners,
         schema=vol.Schema({
             vol.Optional("count", default=5): vol.All(vol.Coerce(int), vol.Range(min=1, max=10)),
-            vol.Optional("source", default=SOURCE_RANDOM): vol.In([SOURCE_RANDOM, SOURCE_FAVORITES]),
+            vol.Optional("source", default=SOURCE_RANDOM): vol.In([SOURCE_RANDOM, SOURCE_FAVORITES, SOURCE_OWN]),
             vol.Optional("list"): cv.string,
             vol.Optional("calendar"): cv.entity_domain("calendar"),
             vol.Optional("start_date"): cv.date,

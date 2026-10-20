@@ -35,6 +35,7 @@ plan_dinners:
           options:
             - random
             - favorites
+            - own
     list:
       example: "Veckans middagar"
       selector:
@@ -61,7 +62,7 @@ plan_dinners:
       selector:
         boolean:
     recipes:
-      description: "Recipe ids to use, e.g. '123,456'. Overrides count and source."
+      description: "Recipe ids to use, e.g. '123,456', or an own recipe's 'own-1a2b3c4d'. Overrides count and source."
       example: "123,456"
       selector:
         text:
@@ -142,6 +143,104 @@ add_dinner:
       selector:
         text:
           type: url
+
+save_recipe:
+  description: "Save one of the household's own recipes to plan again and again, or change one"
+  fields:
+    recipe:
+      description: "Id or title of the own recipe to change; leave out to save a new one"
+      example: "own-1a2b3c4d"
+      selector:
+        text:
+    title:
+      description: "The dish (required for a new recipe)"
+      example: "Potatis- och purjolökssoppa med bröd"
+      selector:
+        text:
+    ingredients:
+      description: "Ingredient lines with amounts, one per line"
+      example: "2 förp potatis- och purjolökssoppa\n1 baguette\n1 dl crème fraiche"
+      selector:
+        text:
+          multiline: true
+    steps:
+      description: "The steps, one per line"
+      example: "Värm soppan.\nServera med bröd och en klick crème fraiche."
+      selector:
+        text:
+          multiline: true
+    note:
+      description: "Optional note"
+      selector:
+        text:
+    cooking_time:
+      description: "Optional, e.g. 'Under 15 minuter'"
+      selector:
+        text:
+    portions:
+      description: "Optional, e.g. '4 portioner'"
+      selector:
+        text:
+    url:
+      description: "Optional link to where the recipe comes from"
+      selector:
+        text:
+          type: url
+    image:
+      description: "Optional picture URL; without one, the picture of ICA's closest recipe is used"
+      selector:
+        text:
+          type: url
+    image_search:
+      description: "Search ICA's recipes for this instead of the title to find the picture"
+      example: "potatis purjolökssoppa"
+      selector:
+        text:
+
+remove_recipe:
+  description: "Remove one of the household's own recipes; dinners already planned with it stay"
+  fields:
+    recipe:
+      description: "Id or title of the own recipe"
+      required: true
+      selector:
+        text:
+
+get_own_recipes:
+  description: "Return the household's own recipes with their ingredients and steps"
+  fields: {}
+
+remove_dinner:
+  description: "Remove the dinner planned for a day, and the list rows only it needed"
+  fields:
+    date:
+      description: "The day of the dinner"
+      required: true
+      selector:
+        date:
+    update_list:
+      description: "Also take the rows planning it put on the shopping list off again, unless another coming dinner needs them"
+      default: true
+      selector:
+        boolean:
+
+move_dinner:
+  description: "Move the dinner planned for a day to another day; a dinner already there swaps places with it"
+  fields:
+    date:
+      description: "The day the dinner is planned for now"
+      required: true
+      selector:
+        date:
+    to:
+      description: "The day to move it to"
+      required: true
+      selector:
+        date:
+
+get_list_dinners:
+  description: "Return the coming dinners with the shopping list rows each one needs"
+  fields: {}
 
 get_memory:
   description: "Return the saved dinner history and preferences"

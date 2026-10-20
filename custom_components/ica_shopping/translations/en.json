@@ -116,6 +116,15 @@
     },
     "dinner_too_old": {
       "message": "Dinners older than {days} days aren't kept, so one on {date} can't be added."
+    },
+    "list_update_failed": {
+      "message": "Couldn't update the ICA shopping list. The dinner is still planned; try again."
+    },
+    "recipe_not_found": {
+      "message": "There is no own recipe {recipe}."
+    },
+    "recipe_needs_title": {
+      "message": "A new own recipe needs a title."
     }
   },
   "services": {
@@ -321,7 +330,7 @@
         },
         "source": {
           "name": "Source",
-          "description": "Random ICA recipes, or recipes you have saved as favorites in the ICA app."
+          "description": "Random ICA recipes, recipes you have saved as favorites in the ICA app, or the household's own recipes."
         },
         "list": {
           "name": "List",
@@ -349,20 +358,113 @@
         },
         "recipes": {
           "name": "Recipe ids",
-          "description": "Recipe ids to use, e.g. '123,456'. Overrides count and source, so exactly the previewed menu is added."
+          "description": "Recipe ids to use, e.g. '123,456', or an own recipe's 'own-1a2b3c4d'. Overrides count and source, so exactly the previewed menu is added."
         },
         "avoid_days": {
           "name": "Avoid recent days",
           "description": "Skip recipes eaten within this many days. 0 turns it off."
         }
       }
+    },
+    "remove_dinner": {
+      "name": "Remove a dinner",
+      "description": "Remove the dinner planned for a day, and the shopping list rows only it needed.",
+      "fields": {
+        "date": {
+          "name": "Date",
+          "description": "The day of the dinner."
+        },
+        "update_list": {
+          "name": "Update the shopping list",
+          "description": "Also take the rows planning it put on the list off again, unless another coming dinner needs them."
+        }
+      }
+    },
+    "move_dinner": {
+      "name": "Move a dinner",
+      "description": "Move the dinner planned for a day to another day. A dinner already there swaps places with it.",
+      "fields": {
+        "date": {
+          "name": "Date",
+          "description": "The day the dinner is planned for now."
+        },
+        "to": {
+          "name": "To",
+          "description": "The day to move it to."
+        }
+      }
+    },
+    "get_list_dinners": {
+      "name": "Get the list's dinners",
+      "description": "Return the coming dinners with the shopping list rows each one needs."
+    },
+    "save_recipe": {
+      "name": "Save own recipe",
+      "description": "Save one of the household's own recipes to plan again and again, or change one.",
+      "fields": {
+        "recipe": {
+          "name": "Recipe",
+          "description": "Id or title of the own recipe to change; leave out to save a new one."
+        },
+        "title": {
+          "name": "Title",
+          "description": "The dish (required for a new recipe)."
+        },
+        "ingredients": {
+          "name": "Ingredients",
+          "description": "Ingredient lines with amounts, one per line."
+        },
+        "steps": {
+          "name": "Steps",
+          "description": "The steps, one per line."
+        },
+        "note": {
+          "name": "Note",
+          "description": "Optional note."
+        },
+        "cooking_time": {
+          "name": "Cooking time",
+          "description": "Optional, e.g. 'Under 15 minuter'."
+        },
+        "portions": {
+          "name": "Portions",
+          "description": "Optional, e.g. '4 portioner'."
+        },
+        "url": {
+          "name": "Link",
+          "description": "Optional link to where the recipe comes from."
+        },
+        "image": {
+          "name": "Picture",
+          "description": "Optional picture URL; without one, the picture of ICA's closest recipe is used."
+        },
+        "image_search": {
+          "name": "Picture search",
+          "description": "Search ICA's recipes for this instead of the title to find the picture."
+        }
+      }
+    },
+    "remove_recipe": {
+      "name": "Remove own recipe",
+      "description": "Remove one of the household's own recipes; dinners already planned with it stay.",
+      "fields": {
+        "recipe": {
+          "name": "Recipe",
+          "description": "Id or title of the own recipe."
+        }
+      }
+    },
+    "get_own_recipes": {
+      "name": "Get own recipes",
+      "description": "Return the household's own recipes with their ingredients and steps."
     }
   },
   "selector": {
     "plan_dinners_source": {
       "options": {
         "random": "Random",
-        "favorites": "Favorites"
+        "favorites": "Favorites",
+        "own": "Own recipes"
       }
     },
     "food_rule_level": {

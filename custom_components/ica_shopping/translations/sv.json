@@ -116,6 +116,15 @@
     },
     "dinner_too_old": {
       "message": "Middagar äldre än {days} dagar sparas inte, så en middag den {date} kan inte läggas till."
+    },
+    "list_update_failed": {
+      "message": "Kunde inte uppdatera ICA-listan. Middagen ligger kvar; försök igen."
+    },
+    "recipe_not_found": {
+      "message": "Det finns inget eget recept {recipe}."
+    },
+    "recipe_needs_title": {
+      "message": "Ett nytt eget recept behöver en titel."
     }
   },
   "services": {
@@ -321,7 +330,7 @@
         },
         "source": {
           "name": "Källa",
-          "description": "Slumpade ICA-recept eller recept du sparat som favoriter i ICA-appen."
+          "description": "Slumpade ICA-recept, recept du sparat som favoriter i ICA-appen, eller hushållets egna recept."
         },
         "list": {
           "name": "Lista",
@@ -349,20 +358,113 @@
         },
         "recipes": {
           "name": "Recept-id",
-          "description": "Recept-id att använda, t.ex. '123,456'. Ersätter count och source, så att exakt det förhandsgranskade menyn läggs till."
+          "description": "Recept-id att använda, t.ex. '123,456' eller ett eget recepts 'own-1a2b3c4d'. Ersätter count och source, så att exakt den förhandsgranskade menyn läggs till."
         },
         "avoid_days": {
           "name": "Undvik senaste dagarna",
           "description": "Hoppa över recept som ätits inom så här många dagar. 0 stänger av."
         }
       }
+    },
+    "remove_dinner": {
+      "name": "Ta bort middag",
+      "description": "Ta bort middagen en viss dag, och raderna på inköpslistan som bara den behövde.",
+      "fields": {
+        "date": {
+          "name": "Datum",
+          "description": "Dagen för middagen."
+        },
+        "update_list": {
+          "name": "Uppdatera inköpslistan",
+          "description": "Ta också bort raderna som planeringen lade på listan, om ingen annan kommande middag behöver dem."
+        }
+      }
+    },
+    "move_dinner": {
+      "name": "Flytta middag",
+      "description": "Flytta middagen en viss dag till en annan dag. Finns det redan en middag där byter de plats.",
+      "fields": {
+        "date": {
+          "name": "Datum",
+          "description": "Dagen middagen ligger på nu."
+        },
+        "to": {
+          "name": "Till",
+          "description": "Dagen den ska flyttas till."
+        }
+      }
+    },
+    "get_list_dinners": {
+      "name": "Hämta listans middagar",
+      "description": "Returnera kommande middagar med raderna på inköpslistan som var och en behöver."
+    },
+    "save_recipe": {
+      "name": "Spara eget recept",
+      "description": "Spara ett av hushållets egna recept att laga igen och igen, eller ändra ett.",
+      "fields": {
+        "recipe": {
+          "name": "Recept",
+          "description": "Id eller titel på det egna receptet som ska ändras; utelämna för ett nytt."
+        },
+        "title": {
+          "name": "Titel",
+          "description": "Rätten (krävs för ett nytt recept)."
+        },
+        "ingredients": {
+          "name": "Ingredienser",
+          "description": "Ingrediensrader med mängd, en per rad."
+        },
+        "steps": {
+          "name": "Steg",
+          "description": "Stegen, ett per rad."
+        },
+        "note": {
+          "name": "Anteckning",
+          "description": "Valfri anteckning."
+        },
+        "cooking_time": {
+          "name": "Tillagningstid",
+          "description": "Valfritt, t.ex. 'Under 15 minuter'."
+        },
+        "portions": {
+          "name": "Portioner",
+          "description": "Valfritt, t.ex. '4 portioner'."
+        },
+        "url": {
+          "name": "Länk",
+          "description": "Valfri länk till var receptet kommer ifrån."
+        },
+        "image": {
+          "name": "Bild",
+          "description": "Valfri bildadress; utan den används bilden från ICA:s närmaste recept."
+        },
+        "image_search": {
+          "name": "Bildsökning",
+          "description": "Sök bland ICA:s recept på detta i stället för titeln för att hitta bilden."
+        }
+      }
+    },
+    "remove_recipe": {
+      "name": "Ta bort eget recept",
+      "description": "Ta bort ett av hushållets egna recept; middagar som redan är planerade med det ligger kvar.",
+      "fields": {
+        "recipe": {
+          "name": "Recept",
+          "description": "Id eller titel på det egna receptet."
+        }
+      }
+    },
+    "get_own_recipes": {
+      "name": "Hämta egna recept",
+      "description": "Returnera hushållets egna recept med ingredienser och steg."
     }
   },
   "selector": {
     "plan_dinners_source": {
       "options": {
         "random": "Slumpade",
-        "favorites": "Favoriter"
+        "favorites": "Favoriter",
+        "own": "Egna recept"
       }
     },
     "food_rule_level": {

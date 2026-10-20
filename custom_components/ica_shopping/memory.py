@@ -25,12 +25,22 @@ STORAGE_KEY = f"{DOMAIN}_memory"
 # Keep the store small: at most this many dinners, and nothing older than this.
 HISTORY_MAX = 300
 HISTORY_MAX_AGE_DAYS = 120
+# A dinner's shopping list rows: all it needs, and the ones planning it put there
+LIST_KEYS = ("on_list", "put_on_list")
 # Ids of dinners without an ICA recipe; never an "@", since calendar uids are "<id>@<date>".
 CUSTOM_ID_PREFIX = "custom-"
 
 
 def is_custom_id(recipe_id) -> bool:
     return str(recipe_id).startswith(CUSTOM_ID_PREFIX)
+
+
+# The household's own recipes, kept to plan again and again
+OWN_ID_PREFIX = "own-"
+
+
+def is_own_id(recipe_id) -> bool:
+    return str(recipe_id).startswith(OWN_ID_PREFIX)
 
 
 class DayTakenError(Exception):
@@ -53,6 +63,9 @@ class DinnerMemory:
         self.food_rules: list[dict] = []
         # The household's own versions of ICA recipes, by recipe id: {title, omit, add, note}
         self.variants: dict[str, dict] = {}
+        # The household's own recipes, by id: {id, title, ingredients, steps, note, cooking_time,
+        # portions, image}. Planned like ICA recipes.
+        self.own_recipes: dict[str, dict] = {}
         self._listeners: list[Callable[[], None]] = []
 
     @callback
@@ -81,6 +94,9 @@ class DinnerMemory:
         self.variants = {
             str(k): v for k, v in (data.get("variants") or {}).items() if isinstance(v, dict)
         }
+        self.own_recipes = {
+            str(k): v for k, v in (data.get("own_recipes") or {}).items() if isinstance(v, dict)
+        }
         _LOGGER.debug(
             "🍽️ Middagsminne laddat: %d middagar, %d preferenser",
             len(self.history),
@@ -94,6 +110,7 @@ class DinnerMemory:
             "preferences": self.preferences,
             "food_rules": self.food_rules,
             "variants": self.variants,
+            "own_recipes": self.own_recipes,
         })
         for update_callback in list(self._listeners):
             update_callback()
@@ -123,6 +140,7 @@ class DinnerMemory:
         known = {(str(e.get("id")), e.get("date")) for e in self.history}
         taken = {e.get("date") for e in self.history}
         added = 0
+        changed = False
         for dinner in dinners:
             recipe_id = dinner.get("id")
             if recipe_id is None:
@@ -130,6 +148,8 @@ class DinnerMemory:
             date = dinner.get("date") or default_date
             key = (str(recipe_id), date)
             if key in known:
+                # Planned again: its rows on the list may have changed
+                changed |= _merge_rows(self.find(str(recipe_id), date), dinner)
                 continue
             if date in taken:
                 _LOGGER.debug("🍽️ %s har redan en middag – hoppar över %s", date, recipe_id)
@@ -145,6 +165,8 @@ class DinnerMemory:
                     "ingredients": dinner.get("ingredients") or [],
                     # Rules the user overrode by asking for this dish (räkor in a räkpasta)
                     **({"keep": dinner["keep"]} if dinner.get("keep") else {}),
+                    # The shopping list rows it needs, and the ones planning it put there
+                    **{k: list(dinner[k]) for k in LIST_KEYS if dinner.get(k)},
                 }
             )
             known.add(key)
@@ -152,6 +174,7 @@ class DinnerMemory:
             added += 1
         if added:
             self._trim()
+        if added or changed:
             await self._async_save()
             _LOGGER.debug("🍽️ %d middagar sparade i minnet", added)
         return added
@@ -327,6 +350,58 @@ class DinnerMemory:
             None,
         )
 
+    def on(self, date: str) -> dict | None:
+        """The dinner planned for `date`, if any."""
+        return next((e for e in self.history if e.get("date") == date), None)
+
+    def rows_needed(self, since: str, but: dict | None = None) -> dict[str, list[dict]]:
+        """List rows (lower-cased) the dinners from `since` on need, with those dinners."""
+        needed: dict[str, list[dict]] = {}
+        for entry in self.history:
+            if entry is but or (entry.get("date") or "") < since:
+                continue
+            for row in entry.get("on_list") or []:
+                needed.setdefault(row.strip().lower(), []).append(entry)
+        return needed
+
+    async def async_remove_on(self, date: str) -> dict | None:
+        """Remove the dinner planned for `date` and return it."""
+        entry = self.on(date)
+        if entry is not None:
+            self.history.remove(entry)
+            await self._async_save()
+        return entry
+
+    async def async_hand_over(self, rows: dict[str, list[dict]]) -> None:
+        """Make the dinners that still need a removed dinner's rows the ones that put them
+        there, so removing them later takes the rows off."""
+        for row, entries in rows.items():
+            for entry in entries:
+                text = next((r for r in entry.get("on_list") or [] if r.strip().lower() == row), None)
+                put = entry.setdefault("put_on_list", [])
+                if text and text not in put:
+                    put.append(text)
+        if rows:
+            await self._async_save()
+
+    async def async_move(self, date: str, new_date: str) -> list[dict]:
+        """Move the dinner on `date` to `new_date`; one already there takes its place.
+
+        Returns the dinners that moved. Raises DinnerTooOldError when `new_date` is past
+        what the memory keeps.
+        """
+        cutoff = dt_util.now().date() - dt.timedelta(days=HISTORY_MAX_AGE_DAYS)
+        if (parsed := parse_date(new_date)) is None or parsed < cutoff:
+            raise DinnerTooOldError(new_date)
+        moving, other = self.on(date), self.on(new_date)
+        if moving is None or date == new_date:
+            return []
+        moving["date"] = new_date
+        if other is not None:
+            other["date"] = date
+        await self._async_save()
+        return [e for e in (moving, other) if e is not None]
+
     async def async_remove_entry(self, recipe_id: str, date: str) -> bool:
         entry = self.find(recipe_id, date)
         if entry is None:
@@ -354,6 +429,41 @@ class DinnerMemory:
         await self._async_save()
         return True
 
+    def find_recipe(self, ref: str) -> dict | None:
+        """An own recipe by id, or by title (any case)."""
+        ref = (ref or "").strip()
+        if ref in self.own_recipes:
+            return self.own_recipes[ref]
+        wanted = ref.lower()
+        return next((r for r in self.own_recipes.values() if (r.get("title") or "").lower() == wanted), None)
+
+    async def async_save_recipe(self, recipe: dict, recipe_id: str | None = None) -> dict:
+        """Save an own recipe, or replace the one with `recipe_id`. Coming dinners of it show
+        the new version; the list stays as it is. Raises KeyError for an unknown `recipe_id`."""
+        if recipe_id is not None and recipe_id not in self.own_recipes:
+            raise KeyError(recipe_id)
+        recipe_id = recipe_id or f"{OWN_ID_PREFIX}{uuid.uuid4().hex[:8]}"
+        saved = {"id": recipe_id, **{k: v for k, v in recipe.items() if v not in (None, "", [])}}
+        self.own_recipes[recipe_id] = saved
+        today = dt_util.now().date().isoformat()
+        for entry in self.history:
+            if entry.get("id") == recipe_id and (entry.get("date") or "") >= today:
+                entry.update(
+                    title=saved["title"],
+                    ingredients=list(saved.get("ingredients") or []),
+                    cooking_time=saved.get("cooking_time"),
+                )
+        await self._async_save()
+        return saved
+
+    async def async_remove_recipe(self, ref: str) -> dict | None:
+        """Remove an own recipe; dinners already planned with it stay."""
+        recipe = self.find_recipe(ref)
+        if recipe is not None:
+            del self.own_recipes[recipe["id"]]
+            await self._async_save()
+        return recipe
+
     async def async_clear(
         self, history: bool = True, preferences: bool = True
     ) -> dict:
@@ -373,14 +483,31 @@ class DinnerMemory:
         return removed
 
     def as_dict(self) -> dict:
-        # Ingredients are for the calendar; leaving them out keeps GetMemory small for the LLM.
-        history = [{k: v for k, v in e.items() if k != "ingredients"} for e in self.history]
+        # Ingredients are for the calendar and list rows for the dashboard; leaving them out
+        # keeps GetMemory small for the LLM.
+        hidden = {"ingredients", *LIST_KEYS}
+        history = [{k: v for k, v in e.items() if k not in hidden} for e in self.history]
         return {
             "history": sorted(history, key=lambda e: e.get("date") or "", reverse=True),
             "preferences": list(self.preferences),
             "food_rules": [dict(r) for r in self.food_rules],
             "variants": {k: dict(v) for k, v in self.variants.items()},
+            # Titles only; the recipes themselves are in get_own_recipes
+            "own_recipes": [
+                {"id": r["id"], "title": r.get("title")} for r in self.own_recipes.values()
+            ],
         }
+
+
+def _merge_rows(entry: dict | None, dinner: dict) -> bool:
+    """Add a re-planned dinner's list rows to its entry; True when that changed it."""
+    changed = False
+    for key in LIST_KEYS:
+        new = [row for row in dinner.get(key) or [] if row not in (entry or {}).get(key, [])]
+        if entry is not None and new:
+            entry.setdefault(key, []).extend(new)
+            changed = True
+    return changed
 
 
 def parse_date(value) -> dt.date | None:

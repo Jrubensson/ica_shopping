@@ -232,6 +232,12 @@ The integration remembers what you have eaten and what you prefer, so `plan_dinn
 | `ica_shopping.remove_preference` | Forget a rule (matched on the text) |
 | `ica_shopping.add_dinner` | Save a dinner of your own (`title`, `date`, optional `note` and `url`) |
 | `ica_shopping.forget_dinner` | Remove a dinner by recipe id/title (`recipe`) and/or `date` |
+| `ica_shopping.save_recipe` | Save an own recipe (`title`, `ingredients`, `steps`, optional `note`, `cooking_time`, `portions`, `url`, `image`, `image_search`), or change one (`recipe`) |
+| `ica_shopping.remove_recipe` | Remove an own recipe by id or title (`recipe`) |
+| `ica_shopping.get_own_recipes` | Returns `{recipes: […]}`: the own recipes with their ingredients and steps |
+| `ica_shopping.remove_dinner` | Remove the dinner on `date`, and the list rows only it needed (`update_list`, default true) |
+| `ica_shopping.move_dinner` | Move the dinner on `date` to `to`; a dinner already there swaps places with it |
+| `ica_shopping.get_list_dinners` | Returns `{dinners: [{id, title, date, on_list: […]}]}`: the coming dinners and the list rows each needs |
 | `ica_shopping.clear_memory` | Empty the history and/or preferences (`history`, `preferences` booleans); `preferences` also clears the food rules and your own versions |
 
 Use `forget_dinner` to correct a wrong entry (say you cooked something else) and `clear_memory` to start over. `forget_dinner` matches the recipe id exactly or as part of the title, and can be narrowed to one date.
@@ -359,6 +365,18 @@ If an external calendar fails part-way, the dinners are still remembered and sho
 
 Dinners remembered before version 1.8.0 were all stored on the day they were planned, so an older weekly plan shows up as several dinners on one day. Move or delete them if they bother you; new plans get one dinner per day.
 
+#### Own recipes
+
+Dishes ICA has no recipe for — the soup on offer that you only heat up, a family recipe, or one the assistant writes from what you have — can be saved as the household's own recipes with `save_recipe` and planned again and again. Their ids start with `own-`. `plan_dinners` takes them in `recipes` like ICA ids, mixed with them if you like, and `source: own` picks among them. Their ingredients go on the list like any recipe's: amounts are read from lines like "2 dl grädde", so equal amounts add up with ICA's recipes, and the food rules, `never_add` and the list tracking apply as usual.
+
+Without an `image`, `save_recipe` takes the picture of ICA's closest recipe to the title (or to `image_search`) — close enough, since a bowl of soup looks the same whoever made it. Changing a recipe also changes the dinners planned with it from today on; the shopping list stays as it is. Their calendar events start with "Eget recept (own-…)", so a dashboard can fetch the steps. `get_memory` lists the own recipes' titles and ids; `clear_memory` keeps the recipes. `add_dinner` stays for one-off dinners that aren't cooked from a recipe.
+
+#### Dinners and the shopping list
+
+When `plan_dinners` puts a dinner's ingredients on the list, the memory notes which rows the dinner needs, and which of those the plan put there rather than finding them on the list already. A summed row ("4.5 dl vispgrädde") belongs to every dinner it was summed from. `get_list_dinners` returns this for the coming dinners, so a dashboard can show what each row is for. A row typed in by hand, or renamed since, has no dinner.
+
+`remove_dinner` uses it to clean up: the rows the plan put there come off the list again, except those another coming dinner needs (they become that dinner's to remove) and those already checked off. Pass `update_list: false` to leave the list as it is. A summed row stays as it is rather than shrinking. `move_dinner` swaps two days in one go. Both change the memory, so the Dinners calendar follows; the **Default calendar** does not.
+
 ## Assist tools
 
 On Home Assistant 2026.8 and newer the integration contributes its own tools to Assist through the `llm` platform, so any voice assistant or LLM conversation agent can use them directly - no scripts, blueprints or YAML to copy. Ask *"what is on offer?"* or *"what should we eat this week?"* and the agent can answer.
@@ -370,6 +388,9 @@ On Home Assistant 2026.8 and newer the integration contributes its own tools to 
 | `ica_shopping__PlanDinners` | Suggest a menu from ICA recipes. `preview: true` returns it without changing the list; commit with `recipes` set to the ids you agreed on, optionally from a `start_date`. Committed dinners go in the Dinners calendar and the **Default calendar** |
 | `ica_shopping__SearchRecipes` | Search ICA's recipes, e.g. when the user asks for a specific dish |
 | `ica_shopping__AddDinner` | Save a dinner of the user's own, without an ICA recipe |
+| `ica_shopping__SaveRecipe` | Save or change one of the household's own recipes — a ready meal from the offers, a family recipe, or one it writes |
+| `ica_shopping__GetOwnRecipes` | The own recipes with ingredients and steps |
+| `ica_shopping__RemoveRecipe` | Remove an own recipe |
 | `ica_shopping__SetFoodRule` / `RemoveFoodRule` | Remember or drop an ingredient to avoid |
 | `ica_shopping__SetRecipeVariant` / `RemoveRecipeVariant` | Remember or drop the household's own version of a recipe |
 | `ica_shopping__SetPreference` / `RemovePreference` | Remember or drop a food preference that isn't about one ingredient |

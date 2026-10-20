@@ -58,27 +58,31 @@ def _annotations(**kwargs: bool) -> Any:
 
 PROMPT = """ICA Shopping gives you the household's grocery list, the offers at the favourite ICA store, and a dinner memory.
 - GetOffers: what is on offer this week (name, brand, deal) and the bonus balance. Treat it as a hint, not a shopping constraint - and remember many offers are not food (cleaning, flowers, drinks).
-- GetMemory: the dinners eaten recently, the saved preferences, the food rules and the household's own versions of recipes. Read it before suggesting meals.
+- GetMemory: the dinners eaten recently, the saved preferences, the food rules, the household's own versions of recipes and the titles and ids of its own recipes. Read it before suggesting meals.
 - PlanDinners: returns real ICA recipes with their ingredients and the merged shopping list. Call it with preview=true to get suggestions; commit with preview=false and the recipe ids you agreed on. Committed dinners land on the next free days from start_date (default tomorrow) in the dinner calendar; days that already have a dinner are skipped, and the result gives each dinner's date. Recipes eaten within avoid_days are skipped automatically. Set add_to_list=false when committing if the user only wants the dinners planned, not added to the shopping list; they still go in the memory and calendar. A preview, or a commit with add_to_list=false, also returns ingredient_groups: one entry per ingredient with the total amount (text), the original lines and the dinners that use it. With match_products=true, amounts like '3 dl grädde', '2 msk tomatpuré' or '1 gul lök' become an ICA product and package count on the list, and the result's products lists each swap, so a preview shows what will be added; products marked pantry (spices, stock, oil, flour, sugar) are things most kitchens already have, so point them out; they are still added, and any the user already has can be removed from the list afterwards; pass match_products=true again when committing. products_skipped "no_store" means no favourite store is set in the ICA app; "store_lookup_failed" means ICA couldn't be reached for the store, so try again later. Either way nothing was matched.
 - SearchRecipes: search ICA's recipes by name or ingredient. Use it when the user asks for a specific dish; plan a result by passing its id in PlanDinners' recipes.
-- AddDinner: save a dinner that is not an ICA recipe (leftovers, takeaway, a family recipe) on a given date. Days that already have a dinner are refused.
+- SaveRecipe / GetOwnRecipes / RemoveRecipe: the household's own recipes, kept to cook again and again. SaveRecipe stores a title, ingredient lines with amounts ("2 dl grädde", "1 förp potatis- och purjolökssoppa") and short steps, and returns its id (own-…); pass recipe=<id> to change one. A picture is taken from ICA's closest recipe by itself; give image_search when the title is a poor search term. Plan an own recipe like an ICA one: PlanDinners with recipes=<its id> (ids can be mixed with ICA ids), or source "own" to pick among them. Its ingredients go on the shopping list like any recipe's.
+- AddDinner: save a one-off dinner without a recipe (leftovers, takeaway, eating out) on a given date. Days that already have a dinner are refused. For anything the household cooks, prefer an own recipe.
 - SetFoodRule / RemoveFoodRule: an ingredient the household avoids. Level "omit" (the default, "hellre utan"): PlanDinners passes by dishes built around it (Löksås och fläsk for lök, a räkpasta for räkor) and leaves it out of the rest, also off the shopping list. Level "never" ("aldrig", for allergies or "inte ens lite"): PlanDinners passes by every recipe that has it. Swedish compound words need care: give terms for the forms that count (lök: "lök"; räkor: "räk"; morot: "morot", "morött") and except for words that contain a term but are something else (lök: "vitlök", "gräslök", "purjolök").
 - SetRecipeVariant / RemoveRecipeVariant: the household's own version of an ICA recipe - ingredient lines it leaves out and lines it adds ("vi brukar ha morötter i köttfärssåsen"). Applied every time that recipe is planned. Recipe ids are in GetMemory's history.
 - SetPreference / RemovePreference: save or drop a preference that is not about one ingredient, such as "vegetariskt på vardagar".
 - ForgetDinner / ClearMemory: correct the dinner memory.
 
 When the user says what they are eating or will eat ("vi äter köttfärssås och spaghetti ikväll", "lägg in tacos på fredag"):
-- Plan exactly that dish: SearchRecipes for it, take the result that best matches what they said, and commit it with PlanDinners (recipes=<its id>, start_date=<that day>, add_to_list=false unless they ask for the ingredients). If no ICA recipe fits, use AddDinner with their words as the title.
+- Plan exactly that dish: an own recipe from GetMemory if one matches, otherwise SearchRecipes for it and take the result that best matches what they said, and commit it with PlanDinners (recipes=<its id>, start_date=<that day>, add_to_list=false unless they ask for the ingredients). If no ICA recipe fits and it is something they cook, write it as an own recipe with SaveRecipe and plan that; if it is not cooked at all (takeaway, leftovers), use AddDinner with their words as the title.
 - Food rules never stop a dish the user names; planning adapts it on its own (the onion is left out of the köttfärssås). Do not mention the rules or say the dish is "utan lök". Only if rule_conflicts lists a rule with level "never" may you note it in one short sentence.
 - Confirm briefly, e.g. "Klart, köttfärssås med spaghetti ikväll."
 
 When asked what to eat:
 1. Read GetMemory and GetOffers first. PlanDinners applies the food rules and the household's own recipe versions by itself, so do not filter its dishes by them, list them, or say a dish is "utan lök", "utan räkor" or similar. Apply the free-text preferences silently in the same way, and mention one only when the user asks about it, or when you could not avoid it.
-2. Build the menu from the recipes PlanDinners returns. Present those dishes (shortening a title is fine); do not invent dishes of your own or rename them into something else.
-3. Treat the offers as a bonus, not a requirement. A dish does not have to use an offer, and it is normal to serve it with whatever it is usually eaten with - kassler with rice or potatoes, pasta with a sauce - even when that side is not on offer. Mention an offer only when a recipe really uses it.
-4. Never pad a dish or a plate with unrelated offers, and never stack several offers onto one meal. Plain, recognisable home cooking beats a clever combination of whatever happens to be cheap.
-5. Never suggest something the memory says was eaten recently, and never add anything to the list until the user agrees.
-6. The memory also holds dinners planned ahead. Each evening gets at most one dinner: when committing, days that are taken are skipped, so tell the user the dates from the result rather than assuming consecutive days.
+2. Build the menu from the recipes PlanDinners returns, ICA's and the household's own. Present those dishes (shortening a title is fine); do not invent dishes of your own or rename them into something else, except as in 3.
+3. A ready meal on offer (a soup, a pie, a pizza or a gratin to heat up, "färdigrätt") is not a dish to cook from scratch: never SearchRecipes for it or plan an ICA recipe in its place. If the user wants it, suggest it as an own recipe - the product and what it is served with as ingredients, and steps like "Värm soppan" - and save it with SaveRecipe once they agree, then plan it.
+4. Treat the offers as a bonus, not a requirement. A dish does not have to use an offer, and it is normal to serve it with whatever it is usually eaten with - kassler with rice or potatoes, pasta with a sauce - even when that side is not on offer. Mention an offer only when a recipe really uses it.
+5. Never pad a dish or a plate with unrelated offers, and never stack several offers onto one meal. Plain, recognisable home cooking beats a clever combination of whatever happens to be cheap.
+6. Never suggest something the memory says was eaten recently, and never add anything to the list until the user agrees.
+7. The memory also holds dinners planned ahead. Each evening gets at most one dinner: when committing, days that are taken are skipped, so tell the user the dates from the result rather than assuming consecutive days.
+
+When the user asks for a dish made from what they have or name ("något med kycklinglårfilé och halloumi"), or dictates a recipe of their own: write a plain home-cooking recipe for the household (amounts for the portions they usually cook, short steps), tell them the dish in a sentence, and save it with SaveRecipe once they agree. Then plan it if they want it on the menu.
 
 When the user says they don't eat or don't like an ingredient, save it with SetFoodRule (level "omit" unless they say never, or it is an allergy). Use SetPreference for other preferences. When they say how they usually change a recipe, save it with SetRecipeVariant."""
 
@@ -138,7 +142,7 @@ class PlanDinnersTool(_ServiceTool):
     name = "ica_shopping__PlanDinners"
     title = "Plan dinners"
     description = (
-        "Returns real ICA recipes with their ingredients, and merges them into a shopping list. "
+        "Returns real ICA recipes, or the household's own, with their ingredients, and merges them into a shopping list. "
         "With preview=true it returns a menu without changing the list - use that to suggest and "
         "refine. Once the user agrees, call it again with preview=false and recipes set to the "
         "ids you agreed on, which adds exactly that menu. Add add_to_list=false to plan the dinners "
@@ -156,7 +160,7 @@ class PlanDinnersTool(_ServiceTool):
             ): int,
             _Optional(
                 "source",
-                description="'random' ICA recipes, or 'favorites' saved in the ICA app.",
+                description="'random' ICA recipes, 'favorites' saved in the ICA app, or 'own' recipes of the household.",
             ): str,
             _Optional(
                 "preview",
@@ -183,7 +187,7 @@ class PlanDinnersTool(_ServiceTool):
                 "recipes",
                 description=(
                     "Comma-separated recipe ids to commit exactly, taken from an earlier "
-                    "preview. Overrides count and source."
+                    "preview, a search or the own recipes (own-…). Overrides count and source."
                 ),
             ): str,
             _Optional(
@@ -244,6 +248,61 @@ class AddDinnerTool(_ServiceTool):
             _Optional("note", description="Optional note for the calendar event."): str,
             _Optional("url", description="Optional link to a recipe."): str,
         }
+    )
+
+
+class SaveRecipeTool(_ServiceTool):
+    name = "ica_shopping__SaveRecipe"
+    title = "Save an own recipe"
+    description = (
+        "Save one of the household's own recipes to cook again and again, or change one by passing "
+        "recipe. Returns the recipe with its id (own-…), which PlanDinners takes in recipes. Only "
+        "save once the user has agreed to the dish."
+    )
+    service = "save_recipe"
+    annotations = _annotations(
+        read_only=False, destructive=False, idempotent=False, open_world=True
+    )
+    parameters = _Schema(
+        {
+            _Optional("recipe", description="Id or title of an own recipe to change; leave out for a new one."): str,
+            _Optional("title", description="The dish. Required for a new recipe."): str,
+            _Optional(
+                "ingredients",
+                description="Ingredient lines with amounts, one per line, e.g. '2 dl grädde'.",
+            ): str,
+            _Optional("steps", description="The steps, one per line, short."): str,
+            _Optional("portions", description="e.g. '4 portioner'."): str,
+            _Optional("cooking_time", description="e.g. 'Under 30 minuter'."): str,
+            _Optional("note", description="Optional note."): str,
+            _Optional(
+                "image_search",
+                description="What to search ICA's recipes for to find a picture, when the title is a poor search term.",
+            ): str,
+        }
+    )
+
+
+class GetOwnRecipesTool(_ServiceTool):
+    name = "ica_shopping__GetOwnRecipes"
+    title = "Get own recipes"
+    description = (
+        "The household's own recipes with their ingredients and steps. GetMemory lists their "
+        "titles and ids; read this before changing one or to tell what is in it."
+    )
+    service = "get_own_recipes"
+
+
+class RemoveRecipeTool(_ServiceTool):
+    name = "ica_shopping__RemoveRecipe"
+    title = "Remove an own recipe"
+    description = "Remove one of the household's own recipes. Dinners already planned with it stay."
+    service = "remove_recipe"
+    annotations = _annotations(
+        read_only=False, destructive=True, idempotent=True, open_world=False
+    )
+    parameters = _Schema(
+        {_Required("recipe", description="Id or title of the own recipe."): str}
     )
 
 
@@ -410,6 +469,9 @@ TOOLS: list[Tool] = [
     PlanDinnersTool(),
     SearchRecipesTool(),
     AddDinnerTool(),
+    SaveRecipeTool(),
+    GetOwnRecipesTool(),
+    RemoveRecipeTool(),
     SetFoodRuleTool(),
     RemoveFoodRuleTool(),
     SetRecipeVariantTool(),

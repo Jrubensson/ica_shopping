@@ -10,7 +10,7 @@ from typing import Iterable
 
 from .const import MAX_ICA_ITEMS, RECIPE_IMAGE_BASE
 from .ica_api import ICAApi, IcaApiError, IcaError, list_matches
-from .memory import is_custom_id
+from .memory import is_custom_id, is_own_id
 from .products import async_match_products
 from .rules import LEVEL_NEVER, adjust, fold, is_theme, mentions, touched_rules
 
@@ -18,6 +18,7 @@ _LOGGER = logging.getLogger(__name__)
 
 SOURCE_RANDOM = "random"
 SOURCE_FAVORITES = "favorites"
+SOURCE_OWN = "own"
 RECIPE_WEB_BASE = "https://www.ica.se"
 _SLUG_CHARS = str.maketrans({"å": "a", "ä": "a", "ö": "o", "é": "e", "è": "e", "ü": "u"})
 
@@ -124,6 +125,8 @@ def group_ingredients(recipes: list[dict], skip_names: Iterable[str] = ()) -> li
 
 
 def recipe_url(recipe: dict) -> str | None:
+    if is_own_id(recipe.get("id")):
+        return recipe.get("url") or None
     for key in ("url", "absoluteUrl", "shareUrl", "webUrl"):
         value = recipe.get(key)
         if isinstance(value, str) and value:
@@ -134,6 +137,48 @@ def recipe_url(recipe: dict) -> str | None:
     # ica.se recipe pages live at /recept/<slugified-title>-<id>/.
     slug = re.sub(r"[^a-z0-9]+", "-", title.lower().translate(_SLUG_CHARS)).strip("-")
     return f"{RECIPE_WEB_BASE}/recept/{slug}-{recipe_id}/"
+
+
+_UNITS = (
+    "st|g|kg|hg|dl|cl|ml|l|msk|tsk|krm|förp|paket|burkar|burk|påsar|påse|knippen|knippe|krukor|kruka"
+    "|klyftor|klyfta|skivor|skiva|portioner|port"
+)
+_AMOUNT = re.compile(
+    rf"^(?P<qty>\d+(?:[.,]\d+)?|\d+/\d+|[½¼¾])\s*(?:(?P<unit>{_UNITS})\b\.?)?\s+(?P<name>\S.*)$",
+    re.IGNORECASE,
+)
+_FRACTIONS = {"½": 0.5, "¼": 0.25, "¾": 0.75}
+
+
+def _own_ingredient(line: str) -> dict:
+    """An own recipe's line in the shape ICA's ingredients have, so equal amounts add up with
+    other recipes': "2 dl grädde" → 2, "dl", "grädde". A line without an amount stays whole."""
+    line = line.strip()
+    if not (match := _AMOUNT.match(line)):
+        return {"ingredient": line, "text": line}
+    qty = match["qty"]
+    if qty in _FRACTIONS:
+        quantity = _FRACTIONS[qty]
+    elif "/" in qty:
+        top, bottom = qty.split("/")
+        quantity = int(top) / int(bottom) if int(bottom) else None
+    else:
+        quantity = float(qty.replace(",", "."))
+    unit = (match["unit"] or "").lower() or None
+    return {"ingredient": match["name"].strip(), "text": line, "quantity": quantity, "unit": unit}
+
+
+def own_recipe(recipe: dict) -> dict:
+    """One of the household's own recipes in the shape ICA's API gives, for planning."""
+    return {
+        "id": recipe["id"],
+        "title": recipe.get("title"),
+        "cookingTime": recipe.get("cooking_time"),
+        "url": recipe.get("url"),
+        "ingredientGroups": [
+            {"ingredients": [_own_ingredient(line) for line in recipe.get("ingredients") or [] if line.strip()]}
+        ],
+    }
 
 
 def entry_description(entry: dict, rules: Iterable[dict] = (), variants: dict | None = None) -> str:
@@ -151,16 +196,18 @@ def entry_description(entry: dict, rules: Iterable[dict] = (), variants: dict | 
         omitted=omitted,
         extra=extra,
         variant=variant,
+        own=entry.get("id") if is_own_id(entry.get("id")) else None,
     )
 
 
 def format_description(
-    cooking_time, url, ingredients, note=None, omitted=(), extra=(), variant=None
+    cooking_time, url, ingredients, note=None, omitted=(), extra=(), variant=None, own=None
 ) -> str:
-    """The note, cooking time and link; the ingredients as "• 2 dl grädde"; then one line per
+    """"Eget recept (own-…)" for one of the household's own recipes, so a dashboard can fetch
+    its steps; the note, cooking time and link; the ingredients as "• 2 dl grädde"; then one line per
     change: "Utan: 1 gul lök (lök)" (the rule in brackets, none for the household's own
     version), "Lägg till: 2 morötter", and "Vår version[: note]" when there is one."""
-    parts = [str(p) for p in (note, cooking_time, url) if p]
+    parts = [str(p) for p in (own and f"Eget recept ({own})", note, cooking_time, url) if p]
     lines = [f"• {line}" for line in ingredients or [] if line]
     changes = [
         f"Utan: {o['line']} ({o['rule']})" if o.get("rule") else f"Utan: {o['line']}" for o in omitted
@@ -259,15 +306,35 @@ async def async_fetch_recipes(
     recipe_ids: list | None = None,
     avoid_ids: Iterable | None = None,
     rules: Iterable[dict] = (),
+    own_recipes: dict | None = None,
 ) -> list[dict]:
     """The recipes to plan. Suggestions pass by recipes the food rules rule out; recipes the
-    caller picked are always fetched, since the user asked for them."""
+    caller picked are always fetched, since the user asked for them. `own_recipes` are the
+    household's own (memory.own_recipes), planned by their "own-" ids or with source "own"."""
     avoid = {str(i) for i in (avoid_ids or ())}
     rules = list(rules)
+    own_recipes = own_recipes or {}
     if recipe_ids:
         # Committing a plan the caller already picked: fetch exactly those recipes.
         picked = [r for r in dict.fromkeys(str(r) for r in recipe_ids) if not is_custom_id(r)]
-        return [r for r in [await api.async_get_recipe(i) for i in picked] if r]
+        return [
+            r for r in [
+                (own_recipe(own_recipes[i]) if i in own_recipes else None)
+                if is_own_id(i) else await api.async_get_recipe(i)
+                for i in picked
+            ] if r
+        ]
+
+    if source == SOURCE_OWN:
+        candidates = [own_recipe(r) for i, r in own_recipes.items() if i not in avoid]
+        random.shuffle(candidates)
+        picked = []
+        for recipe in candidates:
+            if len(picked) >= count:
+                break
+            if not await _async_blocked(api, recipe, rules):
+                picked.append(recipe)
+        return picked
 
     if source == SOURCE_FAVORITES:
         ids = [
@@ -339,43 +406,84 @@ async def async_resolve_or_create_list(api: ICAApi, ref: str | None, default_id:
 
 async def _async_add_to_list(
     api: ICAApi, planned: list[dict], list_ref: str | None, default_list_id: str
-) -> tuple[dict, list[str], list[str]]:
-    """Add the planned ingredients to the list; returns (list, added, skipped_list_full)."""
+) -> tuple[dict, list[str], list[str], list[tuple[str, bool] | None]]:
+    """Add the planned ingredients to the list.
+
+    Returns (list, added, skipped_list_full, on_list): on_list has, for each planned
+    ingredient, the row that covers it now and whether this plan put it there (added or
+    picked up again rather than already on the list), or None when it isn't on the list.
+    """
     target = await async_resolve_or_create_list(api, list_ref, default_list_id)
     # Re-fetch: the overview may omit rows, and active rows decide what to skip.
     target = await api.async_get_list(target["id"]) or target
 
     rows = target.get("rows", [])
-    present = {norm(r["text"]) for r in rows if not r.get("isStriked")}
+    # Key -> the row's text; None for an ingredient left off a full list
+    present: dict[str, str | None] = {norm(r["text"]): r["text"] for r in rows if not r.get("isStriked")}
     struck = {norm(r["text"]): r for r in rows if r.get("isStriked") and r.get("id")}
     room = MAX_ICA_ITEMS - len(rows)
     added: list[str] = []
     skipped: list[str] = []
+    on_list: list[tuple[str, bool] | None] = []
     for ing in planned:
         name_key, text_key = norm(ing["name"]), norm(ing["text"])
-        if name_key in present or text_key in present:
+        if (key := next((k for k in (name_key, text_key) if k in present), None)) is not None:
+            on_list.append(None if present[key] is None else (present[key], False))
             continue
         # Reuse a checked-off row instead of adding a duplicate next to it.
         old = struck.pop(text_key, None) or struck.pop(name_key, None)
         if old is not None:
             if await api.set_striked(target["id"], old["id"], False, row=old.get("raw")):
                 added.append(old["text"])
-                present.add(norm(old["text"]))
+                present[norm(old["text"])] = old["text"]
+                on_list.append((old["text"], True))
+            else:
+                on_list.append(None)
             continue
         if room <= 0:
             skipped.append(ing["text"])
             # Ingredients sharing one product share a row; report it once.
-            present.add(text_key)
+            present[text_key] = None
+            on_list.append(None)
             continue
         if await api.add_to_list(target["id"], ing["text"]):
             added.append(ing["text"])
-            present.add(text_key)
+            present[text_key] = ing["text"]
+            on_list.append((ing["text"], True))
             room -= 1
+        else:
+            on_list.append(None)
     if skipped:
         _LOGGER.warning(
             "⚠️ ICA-listan är full (%d rader); hoppade över %d ingredienser", MAX_ICA_ITEMS, len(skipped)
         )
-    return target, added, skipped
+    return target, added, skipped, on_list
+
+
+def _rows_per_dinner(
+    cooked: list[dict], planned: list[dict], on_list: list[tuple[str, bool] | None]
+) -> list[dict]:
+    """For each recipe, the list rows its ingredients are on ("on_list") and the ones of
+    those this plan put there ("put_on_list").
+
+    A row with one of the recipe's own lines is that recipe's; a summed or product row
+    ("4.5 dl vispgrädde") belongs to every recipe with the ingredient.
+    """
+    index = {id(recipe): i for i, recipe in enumerate(cooked)}
+    groups = _group_by_name(cooked)
+    rows: list[dict] = [{"on_list": [], "put_on_list": []} for _ in cooked]
+    for ing, covered in zip(planned, on_list):
+        if covered is None:
+            continue
+        row, put = covered
+        pairs = groups.get(norm(ing["name"]), [])
+        own = [r for i, r in pairs if (i.get("text") or "").strip() == ing["text"]]
+        for recipe in own or [r for _, r in pairs]:
+            mine = rows[index[id(recipe)]]
+            for key, wanted in (("on_list", True), ("put_on_list", put)):
+                if wanted and row not in mine[key]:
+                    mine[key].append(row)
+    return rows
 
 
 async def async_plan_dinners(
@@ -395,6 +503,7 @@ async def async_plan_dinners(
     list_lock: asyncio.Lock | None = None,
     rules: Iterable[dict] = (),
     variants: dict | None = None,
+    own_recipes: dict | None = None,
 ) -> tuple[dict | None, list[dict], dict]:
     """Return (target list, recipes, service response).
 
@@ -405,11 +514,14 @@ async def async_plan_dinners(
     where one fits at the store with `store_account` (none without one), listed in "products".
     Only the list update holds `list_lock`, so slow searches don't block the to-do sync.
     `rules` (food rules) pass suggestions by and leave ingredients out; `variants` (the
-    household's own versions, by recipe id) leave out and add lines too. Each dinner then has
+    household's own versions, by recipe id) leave out and add lines too. `own_recipes` are the
+    household's own recipes, planned by id or with source "own". Each dinner then has
     "omitted" and "extra", and "rule_conflicts" lists picked dishes built around a rule's ingredient.
+    Once the list is updated, each dinner has the rows it is on in "on_list", and the ones this
+    plan put there in "put_on_list", so removing the dinner can take them off again.
     """
     rules = list(rules)
-    recipes = await async_fetch_recipes(api, count, source, recipe_ids, avoid_ids, rules)
+    recipes = await async_fetch_recipes(api, count, source, recipe_ids, avoid_ids, rules, own_recipes)
     skip_names = {norm(n) for n in never_add}
     only_custom = bool(recipe_ids) and all(is_custom_id(r) for r in recipe_ids)
     if not recipes and not only_custom:
@@ -450,7 +562,9 @@ async def async_plan_dinners(
         }
 
     async with list_lock or contextlib.nullcontext():
-        target, added, skipped = await _async_add_to_list(api, planned, list_ref, default_list_id)
+        target, added, skipped, on_list = await _async_add_to_list(api, planned, list_ref, default_list_id)
+    for dinner, rows in zip(dinners, _rows_per_dinner(cooked, planned, on_list)):
+        dinner.update({key: value for key, value in rows.items() if value})
 
     return target, recipes, {
         "list": target.get("name"),
