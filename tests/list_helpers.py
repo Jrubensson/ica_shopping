@@ -50,7 +50,7 @@ class FakeList:
         api.set_striked = AsyncMock(return_value=True)
         return api
 
-    async def _add(self, _list, text, striked=False):
+    async def _add(self, _list, text, striked=False, name=None):
         # Never reuse an id, or removing one row would take another along
         self.added = getattr(self, "added", 0) + 1
         self.rows.append({"id": f"n{self.added}", "text": text, "isStriked": striked})

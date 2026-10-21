@@ -503,7 +503,7 @@ async def async_add_to_list(
             present[text_key] = None
             on_list.append(None)
             continue
-        if await api.add_to_list(target["id"], ing["text"]):
+        if await api.add_to_list(target["id"], ing["text"], name=ing["name"]):
             added.append(ing["text"])
             present[text_key] = ing["text"]
             on_list.append((ing["text"], True))

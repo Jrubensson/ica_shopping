@@ -49,7 +49,7 @@ class FakeList:
     def __init__(self):
         self.rows = []
 
-    async def add(self, _list, text, striked=False):
+    async def add(self, _list, text, striked=False, name=None):
         self.rows.append({"id": f"r{len(self.rows)}", "text": text, "isStriked": striked})
         return True
 

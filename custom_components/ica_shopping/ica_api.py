@@ -30,6 +30,7 @@ from homeassistant.util import dt as dt_util
 from .const import (
     ACR,
     API_BASE,
+    ARTICLES_PATH,
     AUTHORIZE_ENDPOINT,
     BONUS_PATH,
     DCR_CLIENT_ID,
@@ -274,6 +275,8 @@ class ICAApi:
         self._product_cache: dict[tuple[str, str, int], tuple[float, list[dict]]] = {}
         # A recipe's tags don't change; kept for the session, by recipe id
         self._category_cache: dict[str, list[dict]] = {}
+        # ICA's article table hasn't changed in years; read once per run
+        self._article_groups: dict[str, tuple[int, int]] | None = None
 
     @property
     def auth_state(self) -> dict:
@@ -649,7 +652,36 @@ class ICAApi:
                 return lst.get("name") or f"Lista {list_id}"
         return f"Lista {list_id}"
 
-    async def add_to_list(self, list_offline_id: str, text: str, striked: bool = False) -> bool:
+    async def async_get_article_groups(self) -> dict[str, tuple[int, int]]:
+        """Lower-cased grocery name (and plural) → (articleGroupId, articleGroupIdExtended)."""
+        if self._article_groups is None:
+            data = await self._request("GET", ARTICLES_PATH)
+            groups: dict[str, tuple[int, int]] = {}
+            for article in (data.get("articles") if isinstance(data, dict) else None) or []:
+                if not isinstance(article, dict) or not article.get("parentId"):
+                    continue
+                group = (article["parentId"], article.get("parentIdExtended") or article["parentId"])
+                for name in (article.get("name"), article.get("pluralName")):
+                    if name and name.strip():
+                        groups.setdefault(name.strip().casefold(), group)
+            self._article_groups = groups
+        return self._article_groups
+
+    async def _article_group(self, name: str) -> tuple[int, int] | None:
+        try:
+            groups = await self.async_get_article_groups()
+        except IcaError as err:
+            # The row still goes on, just unsorted
+            _LOGGER.debug("Could not read ICA's article groups: %s", err)
+            return None
+        return groups.get(name.strip().casefold())
+
+    async def add_to_list(
+        self, list_offline_id: str, text: str, striked: bool = False, name: str | None = None
+    ) -> bool:
+        """Add a free-text row. ICA only sorts a row into an aisle by itself when the text is a
+        grocery name it knows, so `name` (the bare grocery, "vispgrädde" for "2 dl vispgrädde")
+        gives the row its category."""
         row = {
             "offlineId": str(uuid.uuid4()).upper(),
             "productName": text,
@@ -659,6 +691,8 @@ class ICAApi:
             "recipes": [],
             "latestChange": _ts(),
         }
+        if name and (group := await self._article_group(name)):
+            row["articleGroupId"], row["articleGroupIdExtended"] = group
         try:
             await self._sync(list_offline_id, {"createdRows": [row]})
             return True

@@ -254,6 +254,8 @@ async def test_commit_adds_the_product_rows():
         _, _, result = await _plan(api, match_products=True, store_account="1003380")
     assert result["added"] == ["Vispgrädde 36% 5dl Skånemejerier (4.5 dl vispgrädde)", "2 gula lökar"]
     assert [c.args[1] for c in api.add_to_list.await_args_list] == result["added"]
+    # Categorised by the ingredient, since ICA doesn't know the product row's text
+    assert [c.kwargs["name"] for c in api.add_to_list.await_args_list] == ["vispgrädde", "gula lökar"]
 
 
 async def test_without_a_store_nothing_is_searched():
@@ -452,7 +454,7 @@ async def test_searches_run_outside_the_list_lock():
         held["search"] = lock.locked()
         return [_p("Vispgrädde 36% 5dl Skånemejerier")]
 
-    async def add(*args):
+    async def add(*args, **kwargs):
         held["add"] = lock.locked()
         return True
 

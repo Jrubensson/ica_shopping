@@ -30,6 +30,8 @@ REDIRECT_URI = "icacurity://app"
 ACR = "urn:se:curity:authentication:html-form:IcaCustomers"
 
 SL_PATH = "sverige/digx/mobile/shoppinglistservice/v1/shoppinglists"
+# ICA's names for groceries, each with the aisle category the app sorts the list by.
+ARTICLES_PATH = "sverige/digx/mobile/shoppinglistservice/v1/articles"
 RECIPE_PATH = "sverige/digx/mobile/recipeservice/v1"
 STORE_PATH = "sverige/digx/mobile/storeservice/v1"
 OFFER_PATH = "sverige/digx/mobile/offerservice/v1"
