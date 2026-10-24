@@ -11,6 +11,7 @@ from custom_components.ica_shopping.products import (
     offers_by_ean,
 )
 from custom_components.ica_shopping.recipes import async_plan_dinners
+from custom_components.ica_shopping.rules import make_rule
 
 
 def _p(name, gtin, **extra):
@@ -82,6 +83,15 @@ def test_an_ingredient_finds_an_offer_by_whole_words_only():
     assert offer_for("gula lökar", [{"name": "Lök gul 1kg", "eans": []}])["name"] == "Lök gul 1kg"
 
 
+def test_a_flavour_or_scent_is_not_an_offer_on_the_ingredient():
+    chips = {"name": "Chips", "eans": [{"id": "1", "articleDescription": "Chips Gräddfil & Lök 175g"}]}
+    soap = {"name": "Diskmedel Citron", "eans": []}
+    assert offer_for("lök", [chips]) is None
+    assert offer_for("citron", [soap]) is None
+    # A describing word may come first, as in ICA's product names.
+    assert offer_for("sallad", [{"name": "Finbladig Sallad", "eans": []}])["name"] == "Finbladig Sallad"
+
+
 def _recipe(rid, *names):
     return {
         "id": rid,
@@ -130,6 +140,14 @@ async def test_offers_tip_the_suggestions_towards_recipes_that_use_them():
 async def test_a_never_add_staple_on_offer_does_not_count():
     api = _random_api(_recipe("1", "pasta"), _recipe("2", "smör"))
     result = await _suggest(api, 1, offers=[{"name": "Smör", "eans": []}])
+    assert [d["id"] for d in result["dinners"]] == ["1"]
+
+
+async def test_an_offer_on_an_ingredient_a_food_rule_leaves_out_does_not_count():
+    api = _random_api(_recipe("1", "pasta"), _recipe("2", "vispgrädde", "lax"))
+    # No tags, so the dish isn't built around vispgrädde and is suggested without it.
+    api.async_get_recipe_categories = AsyncMock(return_value=[])
+    result = await _suggest(api, 1, offers=[GRADDE_OFFER], rules=[make_rule("vispgrädde")])
     assert [d["id"] for d in result["dinners"]] == ["1"]
 
 

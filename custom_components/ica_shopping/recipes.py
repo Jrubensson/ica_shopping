@@ -605,15 +605,18 @@ async def async_plan_dinners(
     recipes = await async_fetch_recipes(
         api, count * 2 if lean else count, source, recipe_ids, avoid_ids, rules, own_recipes
     )
-    used = [recipe_offers(r, offers, skip_names) if offers else [] for r in recipes]
+    adjusted = [await _async_adjust(api, r, rules, variants or {}, bool(recipe_ids)) for r in recipes]
+    # The recipes as they will be cooked, so left-out ingredients stay off the list
+    cooked = [_without(r, a["omitted"], a["extra"]) for r, a in zip(recipes, adjusted)]
+    # Counted on what is cooked, so an offer on a left-out ingredient doesn't count.
+    used = [recipe_offers(c, offers, skip_names) if offers else [] for c in cooked]
     if lean:
         # A stable sort keeps the random order within each half, so offers only tip the scale.
-        ranked = sorted(zip(recipes, used), key=lambda pair: not pair[1])[:count]
-        recipes, used = [r for r, _ in ranked], [u for _, u in ranked]
+        ranked = sorted(zip(recipes, adjusted, cooked, used), key=lambda row: not row[3])[:count]
+        recipes, adjusted, cooked, used = (list(column) for column in zip(*ranked)) if ranked else ([], [], [], [])
     only_custom = bool(recipe_ids) and all(is_custom_id(r) for r in recipe_ids)
     if not recipes and not only_custom:
         raise NoRecipesError(f"No {source} recipes returned")
-    adjusted = [await _async_adjust(api, r, rules, variants or {}, bool(recipe_ids)) for r in recipes]
     dinners = [dinner_summary(r, a) for r, a in zip(recipes, adjusted)]
     for dinner, on_offer in zip(dinners, used):
         if on_offer:
@@ -621,8 +624,6 @@ async def async_plan_dinners(
     conflicts = [c for a in adjusted for c in a["conflicts"]]
     if conflicts:
         _LOGGER.debug("🍽️ Valda rätter som bygger på en undvikt ingrediens: %s", conflicts)
-    # The recipes as they will be cooked, so left-out ingredients stay off the list
-    cooked = [_without(r, a["omitted"], a["extra"]) for r, a in zip(recipes, adjusted)]
     # Every ingredient the plan could add; `planned` is what it will add
     everything = [ing for ing in aggregate_ingredients(cooked) if norm(ing["name"]) not in skip_names]
     extra: dict = {}

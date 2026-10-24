@@ -197,7 +197,8 @@ def offers_by_ean(offers: list[dict]) -> dict[str, dict]:
 def offer_for(ingredient: str, offers: list[dict]) -> dict | None:
     """The offer on what the ingredient names, by the offer's name or one of its products.
 
-    Every word must be a whole word there, so 'smör' doesn't find 'Smörgåsgurka'.
+    Every word must be a whole word there, so 'smör' doesn't find 'Smörgåsgurka', and the name
+    must start with it, so 'citron' doesn't find 'Diskmedel Citron'.
     """
     words = {_stem(w) for w in _words(search_query(ingredient))}
     if not words:
@@ -206,9 +207,18 @@ def offer_for(ingredient: str, offers: list[dict]) -> dict | None:
         names = [offer.get("name") or "", *(
             e.get("articleDescription") or "" for e in offer.get("eans") or [] if isinstance(e, dict)
         )]
-        if any(words <= {_stem(w) for w in _words(name)} for name in names):
+        if any(_names(name, words) for name in names):
             return format_offer(offer)
     return None
+
+
+def _names(name: str, words: set[str]) -> bool:
+    """Whether the name is of what the stemmed words say, read like _relevance reads it."""
+    tokens = _words(name)
+    stems = [_stem(t) for t in tokens]
+    if not stems or not words <= set(stems):
+        return False
+    return stems[0] in words or (len(stems) > 1 and bool(_ADJECTIVE.fullmatch(tokens[0])) and stems[1] in words)
 
 
 def _category(product: dict) -> str | None:
