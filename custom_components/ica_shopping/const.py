@@ -10,6 +10,7 @@ CONF_CALENDAR = "calendar_entity_id"
 
 DEFAULT_NEVER_ADD = ["salt", "peppar", "svartpeppar", "vatten", "olja", "olivolja", "smör"]
 CONF_STORE_ID = "store_id"
+CONF_PREFER_OFFERS = "prefer_offers"
 
 # ICA rejects more rows per list; checked rows count too.
 MAX_ICA_ITEMS = 250

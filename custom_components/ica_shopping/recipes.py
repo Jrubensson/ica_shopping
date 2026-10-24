@@ -12,7 +12,7 @@ from .const import MAX_ICA_ITEMS, RECIPE_IMAGE_BASE
 from .ica_api import ICAApi, IcaApiError, IcaError, list_matches
 from .matching import covers
 from .memory import LEFT_OFF_KEY, is_custom_id, is_own_id
-from .products import async_match_products
+from .products import async_match_products, offer_for
 from .rules import LEVEL_NEVER, adjust, fold, is_theme, mentions, touched_rules
 
 _LOGGER = logging.getLogger(__name__)
@@ -379,6 +379,18 @@ async def async_fetch_recipes(
     return list(recipes.values())
 
 
+def recipe_offers(recipe: dict, offers: list[dict], skip_names: set[str]) -> list[dict]:
+    """The store's offers the recipe uses, one per ingredient, leaving out never-add staples."""
+    found: dict[str, dict] = {}
+    for ing in _ingredients(recipe):
+        name = _ingredient_name(ing)
+        if not name or norm(name) in skip_names or norm(name) in found:
+            continue
+        if offer := offer_for(name, offers):
+            found[norm(name)] = {"ingredient": name, **offer}
+    return list(found.values())
+
+
 async def _async_adjust(
     api: ICAApi, recipe: dict, rules: list[dict], variants: dict, picked: bool
 ) -> dict:
@@ -562,6 +574,7 @@ async def async_plan_dinners(
     variants: dict | None = None,
     own_recipes: dict | None = None,
     items: Iterable[str] | None = None,
+    offers: list[dict] | None = None,
 ) -> tuple[dict | None, list[dict], dict]:
     """Return (target list, recipes, service response).
 
@@ -581,15 +594,30 @@ async def async_plan_dinners(
     are left off this time only, and each dinner names its own in "left_off". A preview's
     ingredient groups then still has them all, and each group says which row already covers it
     in "on_list".
+    With the store's `offers` (the household opted in), suggestions are drawn from twice as many
+    recipes and the ones using an offer go first, matched products prefer the one on offer, and
+    each dinner lists the offers it uses in "offers".
     """
     rules = list(rules)
-    recipes = await async_fetch_recipes(api, count, source, recipe_ids, avoid_ids, rules, own_recipes)
     skip_names = {norm(n) for n in never_add}
+    # Only suggestions are reordered; recipes the caller picked stay as they are.
+    lean = bool(offers) and not recipe_ids
+    recipes = await async_fetch_recipes(
+        api, count * 2 if lean else count, source, recipe_ids, avoid_ids, rules, own_recipes
+    )
+    used = [recipe_offers(r, offers, skip_names) if offers else [] for r in recipes]
+    if lean:
+        # A stable sort keeps the random order within each half, so offers only tip the scale.
+        ranked = sorted(zip(recipes, used), key=lambda pair: not pair[1])[:count]
+        recipes, used = [r for r, _ in ranked], [u for _, u in ranked]
     only_custom = bool(recipe_ids) and all(is_custom_id(r) for r in recipe_ids)
     if not recipes and not only_custom:
         raise NoRecipesError(f"No {source} recipes returned")
     adjusted = [await _async_adjust(api, r, rules, variants or {}, bool(recipe_ids)) for r in recipes]
     dinners = [dinner_summary(r, a) for r, a in zip(recipes, adjusted)]
+    for dinner, on_offer in zip(dinners, used):
+        if on_offer:
+            dinner["offers"] = on_offer
     conflicts = [c for a in adjusted for c in a["conflicts"]]
     if conflicts:
         _LOGGER.debug("🍽️ Valda rätter som bygger på en undvikt ingrediens: %s", conflicts)
@@ -608,7 +636,7 @@ async def async_plan_dinners(
     if match_products:
         # Without the store, ICA's all-store search is too noisy to pick products from.
         products = [] if not store_account else await async_match_products(
-            api, summed_ingredients(cooked, skip_names | left_off), store_account
+            api, summed_ingredients(cooked, skip_names | left_off), store_account, offers
         )
         if not store_account:
             extra["products_skipped"] = "no_store"

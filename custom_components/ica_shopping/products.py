@@ -7,8 +7,9 @@ import math
 import re
 import unicodedata
 from collections import Counter
+from typing import Collection
 
-from .ica_api import ICAApi, IcaError, IcaRateLimitedError
+from .ica_api import ICAApi, IcaError, IcaRateLimitedError, format_offer
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -178,6 +179,38 @@ def _relevance(name: str, words: list[str]) -> int:
     return int(len(tokens) > 1 and bool(_ADJECTIVE.fullmatch(tokens[0])) and any(_fits(tokens[1], w) for w in words))
 
 
+def _ean(code) -> str:
+    """ICA's search pads EANs to 14 digits, its offers don't."""
+    return str(code or "").strip().lstrip("0")
+
+
+def offers_by_ean(offers: list[dict]) -> dict[str, dict]:
+    """Each product an offer covers, by EAN, with the offer as format_offer gives it."""
+    found = {}
+    for offer in offers:
+        for item in offer.get("eans") or []:
+            if isinstance(item, dict) and (ean := _ean(item.get("id"))):
+                found.setdefault(ean, format_offer(offer))
+    return found
+
+
+def offer_for(ingredient: str, offers: list[dict]) -> dict | None:
+    """The offer on what the ingredient names, by the offer's name or one of its products.
+
+    Every word must be a whole word there, so 'smör' doesn't find 'Smörgåsgurka'.
+    """
+    words = {_stem(w) for w in _words(search_query(ingredient))}
+    if not words:
+        return None
+    for offer in offers:
+        names = [offer.get("name") or "", *(
+            e.get("articleDescription") or "" for e in offer.get("eans") or [] if isinstance(e, dict)
+        )]
+        if any(words <= {_stem(w) for w in _words(name)} for name in names):
+            return format_offer(offer)
+    return None
+
+
 def _category(product: dict) -> str | None:
     level2 = product.get("ecomCategoryNameLevel2") or []
     return level2[0] if level2 else None
@@ -226,9 +259,12 @@ def _candidates(query: str, products: list[dict]) -> list[tuple[int, dict]]:
 
 
 def choose_product(
-    query: str, dimension: str, needed: float, products: list[dict]
+    query: str, dimension: str, needed: float, products: list[dict], offered: Collection[str] = ()
 ) -> tuple[dict, int] | None:
-    """The product and package count to buy, or None when nothing fits."""
+    """The product and package count to buy, or None when nothing fits.
+
+    A product whose EAN is in `offered` wins over ICA's ranking, but not over a better fit.
+    """
     if needed <= 0:
         return None
     best = None
@@ -241,7 +277,7 @@ def choose_product(
         if count > MAX_PACKAGES or (leftover > MAX_LEFTOVER and count * size[1] > MAX_LEFTOVER_RATIO * needed):
             continue
         # Ranking beats an exact fit, or small speciality packs win on leftover alone.
-        key = (count, count * size[1] > GOOD_FIT_RATIO * needed, rank)
+        key = (count, count * size[1] > GOOD_FIT_RATIO * needed, _ean(product.get("gtin")) not in offered, rank)
         if best is None or key < best[0]:
             best = (key, product, count)
     return (best[1], best[2]) if best else None
@@ -277,9 +313,10 @@ def _small_fit(kind: str, amount: float, name: str) -> tuple[int, int, float] | 
 
 
 def choose_package(
-    query: str, kind: str, amount: float, products: list[dict]
+    query: str, kind: str, amount: float, products: list[dict], offered: Collection[str] = ()
 ) -> tuple[dict, int] | None:
-    """The smallest normal package for spoons, pinches, pieces, cubes, portions or packages."""
+    """The smallest normal package for spoons, pinches, pieces, cubes, portions or packages;
+    of two the same size, the one whose EAN is in `offered`."""
     if amount <= 0:
         return None
     best = None
@@ -287,7 +324,7 @@ def choose_package(
         fit = _small_fit(kind, amount, product.get("displayName") or "")
         if fit is None or fit[1] > MAX_PACKAGES:
             continue
-        key = (*fit, rank)
+        key = (*fit, _ean(product.get("gtin")) not in offered, rank)
         if best is None or key < best[0]:
             best = (key, product, fit[1])
     return (best[1], best[2]) if best else None
@@ -308,9 +345,14 @@ def product_text(name: str, count: int, needed: str) -> str:
 
 
 async def async_match_products(
-    api: ICAApi, wanted: list[dict], account_number: str | None
+    api: ICAApi, wanted: list[dict], account_number: str | None, offers: list[dict] | None = None
 ) -> list[dict]:
-    """Match each {name, text, quantity, unit} to a product; unmatched ones are left out."""
+    """Match each {name, text, quantity, unit} to a product; unmatched ones are left out.
+
+    With the store's `offers`, a product on offer is picked when it fits as well, and its
+    result has the deal in "offer".
+    """
+    offered = offers_by_ean(offers or [])
     semaphore = asyncio.Semaphore(PARALLEL_SEARCHES)
 
     async def match(item: dict) -> dict | None:
@@ -338,15 +380,15 @@ async def async_match_products(
             _LOGGER.debug("Produktsökning för '%s' begränsades av ICA (429)", query)
             return None
         if base:
-            chosen = choose_product(query, base[0], base[1], products)
+            chosen = choose_product(query, base[0], base[1], products, offered)
         else:
             if _unit(item.get("unit")) in FRESH_UNITS:
                 products = [p for p in products if not _is_dried(p)]
-            chosen = choose_package(query, small[0], small[1], products)
+            chosen = choose_package(query, small[0], small[1], products, offered)
         if chosen is None:
             return None
         product, count = chosen
-        return {
+        result = {
             "ingredient": item["name"],
             "needed": item["text"],
             "product": product.get("displayName"),
@@ -361,6 +403,9 @@ async def async_match_products(
             "_pieces": small[1] if small and small[0] == "piece" else None,
             "_packages": count if small and small[0] == "package" else None,
         }
+        if offer := offered.get(_ean(product.get("gtin"))):
+            result["offer"] = offer
+        return result
 
     tasks = [asyncio.create_task(match(item)) for item in wanted]
     if not tasks:

@@ -122,6 +122,8 @@ mode: single
 
 Ingredients already on the list are skipped, as are pantry staples listed under **Never add from recipes** in the integration's options (default: salt, peppar, svartpeppar, vatten, olja, olivolja, smör).
 
+**Prefer offers when planning** in the integration's options is off by default. Turned on, suggestions are drawn from twice as many recipes and the ones using this week's offers at your store go first, without leaving out the rest. `match_products` then picks the product on offer when it fits the amount as well as the others, and each dinner lists the offers it uses in `offers`. Staples under **Never add from recipes** don't count, and recipes you pick in `recipes` are never reordered.
+
 Committed dinners always appear in the integration's own **Dinners** calendar (see [Dinner Calendar](#dinner-calendar)). To have them in another calendar too, set `calendar` or pick a **Default calendar** in the integration's options; the Assist tool uses that option. Each event there has the recipe title as its name and the cooking time, recipe link and ingredients in its description. A `calendar` you pass must be available and support creating events (Local Calendar, Google Calendar and CalDAV do); otherwise the action fails before anything is added to the ICA list. The **Default calendar** option only offers calendars that can create events, and if it is unavailable or no longer exists when you plan, it is skipped with a warning in the log, so planning still works.
 
 This automation plans Monday–Friday every Sunday morning, puts the dinners in a calendar and sends the menu to your phone:

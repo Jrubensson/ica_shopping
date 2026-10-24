@@ -56,9 +56,11 @@
           "remove_striked": "Rensa avbockade varor efter varje synk",
           "never_add": "Lägg aldrig till från recept",
           "store_id": "Butik för erbjudanden",
+          "prefer_offers": "Föredra erbjudanden vid planering",
           "calendar_entity_id": "Standardkalender"
         },
         "data_description": {
+          "prefer_offers": "Av som standard. När den är på väljer ica_shopping.plan_dinners hellre föreslagna recept som använder veckans erbjudanden i butiken, och match_products tar varan på erbjudande när den passar mängden lika bra som de andra.",
           "never_add": "Basvaror som ica_shopping.plan_dinners hoppar över, matchat på ingrediensnamnet.",
           "calendar_entity_id": "Kalender som ica_shopping.plan_dinners också lägger händelser i när ingen kalender anges. Bara kalendrar som kan skapa händelser visas; är den inte tillgänglig när du planerar hoppas den över. ICA:s middagskalender visar alltid planen, så lämna tomt om du inte vill ha middagarna i en annan kalender också."
         }

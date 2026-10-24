@@ -56,9 +56,11 @@
           "remove_striked": "Clear checked items after every sync",
           "never_add": "Never add from recipes",
           "store_id": "Store for offers",
+          "prefer_offers": "Prefer offers when planning",
           "calendar_entity_id": "Default calendar"
         },
         "data_description": {
+          "prefer_offers": "Off by default. When on, ica_shopping.plan_dinners leans a little towards suggested recipes that use this week's offers at the store, and match_products picks the product on offer when it fits the amount as well as the others.",
           "never_add": "Pantry staples that ica_shopping.plan_dinners skips, matched on the ingredient name.",
           "calendar_entity_id": "Calendar that ica_shopping.plan_dinners also adds events to when no calendar is given. Only calendars that can create events are listed; if it is unavailable when you plan, it is skipped. The ICA dinner calendar always shows the plan, so leave this empty unless you want the dinners in another calendar too."
         }

@@ -32,6 +32,7 @@ from .const import (
     CONF_CALENDAR,
     CONF_LIST_ID,
     CONF_NEVER_ADD,
+    CONF_PREFER_OFFERS,
     CONF_REMOVE_STRIKED,
     CONF_STORE_ID,
     CONF_TODO_ENTITY,
@@ -627,6 +628,25 @@ async def async_setup(hass, config):
         data["store_account"] = (choice, account, time.monotonic())
         return account, None
 
+    async def _planning_offers(api: ICAApi, options: dict) -> list[dict] | None:
+        """The store's offers when the household opted in to prefer them; None otherwise or
+        when ICA can't be reached, so planning goes on without them."""
+        if not options.get(CONF_PREFER_OFFERS):
+            return None
+        data = hass.data[DOMAIN]
+        choice = options.get(CONF_STORE_ID)
+        cached = data.get("planning_offers")
+        if cached and cached[0] == choice and time.monotonic() - cached[1] < OFFERS_CACHE_SECONDS:
+            return cached[2]
+        try:
+            store = pick_store(await api.async_get_favorite_stores(), choice)
+            offers = await api.async_get_store_offers(store["id"]) if store else []
+        except IcaError as err:
+            _LOGGER.warning("⚠️ Kunde inte hämta erbjudanden för planeringen: %s", err)
+            return None
+        data["planning_offers"] = (choice, time.monotonic(), offers)
+        return offers
+
     async def handle_plan_dinners(call: ServiceCall) -> ServiceResponse:
         sync = _sync_or_raise()
         data = hass.data[DOMAIN]
@@ -662,6 +682,7 @@ async def async_setup(hass, config):
                 variants=memory.variants if memory is not None else None,
                 own_recipes=memory.own_recipes if memory is not None else None,
                 items=_lines(call.data["items"]) if "items" in call.data else None,
+                offers=await _planning_offers(data[DATA_ICA], options),
             )
         except NoRecipesError as err:
             raise HomeAssistantError(

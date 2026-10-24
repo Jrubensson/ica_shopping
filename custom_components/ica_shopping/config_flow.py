@@ -25,6 +25,7 @@ from .const import (
     CONF_CALENDAR,
     CONF_LIST_ID,
     CONF_NEVER_ADD,
+    CONF_PREFER_OFFERS,
     CONF_REMOVE_STRIKED,
     CONF_STORE_ID,
     CONF_TODO_ENTITY,
@@ -276,5 +277,9 @@ class ICAOptionsFlowHandler(OptionsFlow):
                     description={"suggested_value": entry.options.get(CONF_CALENDAR)},
                 ): CALENDAR_SELECTOR,
                 **store_fields,
+                vol.Optional(
+                    CONF_PREFER_OFFERS,
+                    default=entry.options.get(CONF_PREFER_OFFERS, False),
+                ): BooleanSelector(),
             }),
         )
