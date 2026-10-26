@@ -9,7 +9,7 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.helpers.storage import Store
@@ -477,6 +477,28 @@ class DinnerMemory:
             else:
                 entry.pop(key, None)
         await self._async_save()
+
+    async def async_follow_rows(self, renamed: dict[str, str], claimed: Iterable[str] = ()) -> None:
+        """Follow list rows the household added to: a merged row keeps its dinners under its
+        new text, and a row it asked for itself is no longer only a plan's, so removing the
+        dinner leaves it on the list."""
+        claimed = set(claimed)
+        changed = False
+        for entry in self.history:
+            for key in LIST_KEYS:
+                if not entry.get(key):
+                    continue
+                rows = list(dict.fromkeys(renamed.get(row, row) for row in entry[key]))
+                if key == "put_on_list":
+                    rows = [row for row in rows if row not in claimed]
+                if rows != entry[key]:
+                    changed = True
+                    if rows:
+                        entry[key] = rows
+                    else:
+                        entry.pop(key)
+        if changed:
+            await self._async_save()
 
     async def async_remove_recipe(self, ref: str) -> dict | None:
         """Remove an own recipe; dinners already planned with it stay."""

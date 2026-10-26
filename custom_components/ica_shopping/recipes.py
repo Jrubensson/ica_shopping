@@ -10,7 +10,7 @@ from typing import Iterable
 
 from .const import MAX_ICA_ITEMS, RECIPE_IMAGE_BASE
 from .ica_api import ICAApi, IcaApiError, IcaError, list_matches
-from .matching import covers
+from .matching import covers, merge, same
 from .memory import LEFT_OFF_KEY, is_custom_id, is_own_id
 from .products import async_match_products, offer_for
 from .rules import LEVEL_NEVER, adjust, fold, is_theme, mentions, touched_rules
@@ -527,6 +527,89 @@ async def async_add_to_list(
             "⚠️ ICA-listan är full (%d rader); hoppade över %d ingredienser", MAX_ICA_ITEMS, len(skipped)
         )
     return target, added, skipped, on_list
+
+
+async def async_add_items(
+    api: ICAApi, items: Iterable[str], default_list_id: str, allow_similar: bool = False
+) -> tuple[dict, dict[str, str], list[str]]:
+    """Put rows the household asks for on the list, minding the unchecked rows already there.
+
+    An item reading as a row is skipped. One that is the same thing as a row is merged into
+    it: "Mjölk" and "Mjölk 1 l" make "Mjölk 1 l", "Potatis 7 st" and "Potatis 3 st" make
+    "Potatis 10 st", and "Mjölk" next to "Mjölk 1 l" is skipped. One a row covers the way
+    planning matches rows ("Mjölk" covers "Laktosfri mjölk") is skipped too. With
+    allow_similar only the items reading as a row are skipped. A checked-off row reading as the
+    item is checked on again rather than added next to it; otherwise checked-off rows don't
+    count. The same thing with amounts that don't add up ("Potatis 2 kg", "Potatis 7 st") goes
+    on as its own row, listed in "similar".
+
+    ICA's list takes new rows and removals, so a merged row is a new row in the old one's
+    place, with the category of its grocery like every row added here. Returns (response,
+    renamed, claimed): the merged rows' old text → new text, and the rows an item landed on,
+    under their new text, which the household now wants whatever happens to the dinners.
+    """
+    target = await async_resolve_or_create_list(api, None, default_list_id)
+    target = await api.async_get_list(target["id"]) or target
+    rows = target.get("rows", [])
+    # [text the row will have, the row on ICA's list or None for a new one]
+    active: list[list] = [[r["text"], r] for r in rows if r.get("text") and not r.get("isStriked")]
+    struck = {norm(r["text"]): r for r in rows if r.get("isStriked") and r.get("id")}
+    room = MAX_ICA_ITEMS - len(rows)
+    response: dict = {"list": target.get("name"), "added": [], "merged": [], "skipped": [], "similar": []}
+    full: list[str] = []
+    landed: list[list] = []
+    for item in (str(i).strip() for i in items):
+        if not item:
+            continue
+        found, now = next((a for a in active if norm(a[0]) == norm(item)), None), None
+        if found is None and not allow_similar:
+            found, now = next(((a, m) for a in active if (m := merge(a[0], item)) is not None), (None, None))
+            if found is None:
+                found = next((a for a in active if covers(a[0], item)), None)
+        if found is not None:
+            if now is not None and now != found[0]:
+                response["merged"].append({"item": item, "row": found[0], "now": now})
+                found[0] = now
+            else:
+                response["skipped"].append({"item": item, "row": found[0]})
+            landed.append(found)
+            continue
+        response["similar"] += [{"item": item, "row": a[0]} for a in active if same(a[0], item)]
+        if (old := struck.pop(norm(item), None)) is not None:
+            if await api.set_striked(target["id"], old["id"], False, row=old.get("raw")):
+                response["added"].append(old["text"])
+                active.append([old["text"], old])
+            continue
+        if room <= 0:
+            full.append(item)
+            continue
+        active.append([item, None])
+        room -= 1
+
+    renamed: dict[str, str] = {}
+    failed: list[str] = []
+    for text, row in active:
+        if row is not None and text == row["text"]:
+            continue
+        # Looked up by the text, so "Potatis 7 st" sorts under potatis like "Potatis" does
+        if not await api.add_to_list(target["id"], text, name=text):
+            failed.append(text)
+        elif row is None:
+            response["added"].append(text)
+        # On before the old row comes off, so a failure leaves both rather than neither
+        elif await api.remove_items(target["id"], [row["id"]]):
+            renamed[row["text"]] = text
+        else:
+            failed.append(row["text"])
+    # Dropped from merges whose new row didn't go on; the old one is still there
+    response["merged"] = [m for m in response["merged"] if m["now"] not in failed]
+    if full:
+        _LOGGER.warning("⚠️ ICA-listan är full (%d rader); hoppade över %d varor", MAX_ICA_ITEMS, len(full))
+        response["skipped_list_full"] = full
+    if failed:
+        response["failed"] = failed
+    claimed = [a[0] for a in landed if a[1] is not None and a[0] not in failed]
+    return response, renamed, list(dict.fromkeys(claimed))
 
 
 def _rows_per_dinner(

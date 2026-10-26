@@ -51,6 +51,7 @@ from .const import (
     TOKEN_ENDPOINT,
     USER_AGENT,
 )
+from .matching import grocery_names
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -674,14 +675,15 @@ class ICAApi:
             # The row still goes on, just unsorted
             _LOGGER.debug("Could not read ICA's article groups: %s", err)
             return None
-        return groups.get(name.strip().casefold())
+        return next((groups[n] for n in map(str.casefold, grocery_names(name)) if n in groups), None)
 
     async def add_to_list(
         self, list_offline_id: str, text: str, striked: bool = False, name: str | None = None
     ) -> bool:
         """Add a free-text row. ICA only sorts a row into an aisle by itself when the text is a
-        grocery name it knows, so `name` (the bare grocery, "vispgrädde" for "2 dl vispgrädde")
-        gives the row its category."""
+        grocery name it knows, so `name` gives the row its category: the grocery ("vispgrädde"
+        for "2 dl vispgrädde"), or the row itself, looked up without its amount ("Potatis 7 st"
+        as potatis)."""
         row = {
             "offlineId": str(uuid.uuid4()).upper(),
             "productName": text,

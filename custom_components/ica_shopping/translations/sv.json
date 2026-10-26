@@ -127,6 +127,9 @@
     },
     "recipe_needs_title": {
       "message": "Ett nytt eget recept behöver en titel."
+    },
+    "add_items_failed": {
+      "message": "Kunde inte läsa ICA-listan, så inget lades till. Försök igen."
     }
   },
   "services": {
@@ -137,6 +140,20 @@
     "clear_checked": {
       "name": "Rensa avbockade varor",
       "description": "Synka och ta sedan bort avbockade rader från ICA-listan och klara poster från att göra-listan."
+    },
+    "add_items": {
+      "name": "Lägg till varor",
+      "description": "Lägg rader på inköpslistan, utan det som redan finns där, och slå ihop samma vara till en rad.",
+      "fields": {
+        "items": {
+          "name": "Varor",
+          "description": "Raderna att lägga till, som en lista eller en per rad, t.ex. 'Potatis 7 st'."
+        },
+        "allow_similar": {
+          "name": "Tillåt liknande",
+          "description": "Hoppa bara över varor som står exakt som en rad; lägg resten som egna rader i stället för att slå ihop dem."
+        }
+      }
     },
     "get_offers": {
       "name": "Hämta erbjudanden",

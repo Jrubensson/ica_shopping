@@ -58,6 +58,7 @@ from .recipes import (
     NoRecipesError,
     async_plan_dinners,
     entry_description,
+    async_add_items,
     async_add_to_list,
     cooked_lines,
     norm as _norm,
@@ -349,7 +350,8 @@ async def _perform_sync_locked(hass, api: ICAApi, entry, clear_checked: bool) ->
         for key in add_to_ica:
             text = ha[key]["text"]
             done = _ha_done(ha[key])
-            if await api.add_to_list(list_offline_id, text, striked=done):
+            # Looked up by the text, so "Potatis 7 st" sorts under potatis like "Potatis" does
+            if await api.add_to_list(list_offline_id, text, striked=done, name=text):
                 _LOGGER.info("📥 Lade till '%s' i ICA", text)
                 # No row id until the next fetch, so clearing skips it this run.
                 ica[key] = {"text": text, "rows": [{"id": None, "isStriked": done, "raw": None}]}
@@ -483,6 +485,41 @@ async def async_setup(hass, config):
 
     hass.services.async_register(DOMAIN, "refresh", handle_refresh)
     hass.services.async_register(DOMAIN, "clear_checked", handle_clear_checked)
+
+    async def handle_add_items(call: ServiceCall) -> ServiceResponse:
+        """Put rows on the configured list without doubling what is there already."""
+        sync = _sync_or_raise()
+        data = hass.data[DOMAIN]
+        async with data.setdefault("sync_lock", asyncio.Lock()):
+            try:
+                result, renamed, claimed = await async_add_items(
+                    _api_or_raise(),
+                    _lines(call.data["items"]),
+                    data["current_list_id"],
+                    allow_similar=call.data["allow_similar"],
+                )
+            except IcaError as err:
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN, translation_key="add_items_failed"
+                ) from err
+        if (memory := data.get("memory")) is not None and (renamed or claimed):
+            await memory.async_follow_rows(renamed, claimed)
+        if result["added"] or result["merged"]:
+            # Push the rows to the to-do entity now instead of on the next refresh.
+            await sync()
+        return result
+
+    hass.services.async_register(
+        DOMAIN,
+        "add_items",
+        handle_add_items,
+        schema=vol.Schema({
+            # As a list or one per line; a row can hold a comma ("2 morötter, rivna").
+            vol.Required("items"): vol.Any(cv.string, [cv.string]),
+            vol.Optional("allow_similar", default=False): cv.boolean,
+        }),
+        supports_response=SupportsResponse.OPTIONAL,
+    )
 
     async def handle_get_offers(call: ServiceCall) -> ServiceResponse:
         """The favourite store's current offers and the bonus balance."""

@@ -57,6 +57,7 @@ def _annotations(**kwargs: bool) -> Any:
 
 
 PROMPT = """ICA Shopping gives you the household's grocery list, the offers at the favourite ICA store, and a dinner memory.
+- AddToShoppingList: put groceries on the shopping list. Use it rather than adding to the to-do list directly, since it looks at what is on the list first. Give each item as the user said it, with any amount ("Potatis 7 st", "Mjölk 1 l"); a dinner's ingredients go on with PlanDinners instead. An item already on the list comes back in skipped, with the row that has it; the same item with an amount is merged into its row (merged: "Mjölk" and "Mjölk 1 l" make "Mjölk 1 l", "Potatis 7 st" and "Potatis 3 st" make "Potatis 10 st"). Tell the user in a few words what you added, merged and skipped ("Mjölk fanns redan."). similar lists rows of the same item that could not be merged, such as "Potatis 2 kg" next to "Potatis 7 st"; mention those. If the user wants a skipped or merged item as a row of its own anyway, call it again with allow_similar=true.
 - GetOffers: what is on offer this week (name, brand, deal) and the bonus balance. Treat it as a hint, not a shopping constraint - and remember many offers are not food (cleaning, flowers, drinks).
 - GetMemory: the dinners eaten recently, the saved preferences, the food rules, the household's own versions of recipes and the titles and ids of its own recipes. Read it before suggesting meals.
 - PlanDinners: returns real ICA recipes with their ingredients and the merged shopping list. Call it with preview=true to get suggestions; commit with preview=false and the recipe ids you agreed on. Committed dinners land on the next free days from start_date (default tomorrow) in the dinner calendar; days that already have a dinner are skipped, and the result gives each dinner's date. Recipes eaten within avoid_days are skipped automatically. Set add_to_list=false when committing if the user only wants the dinners planned, not added to the shopping list; they still go in the memory and calendar. A preview, or a commit with add_to_list=false, also returns ingredient_groups: one entry per ingredient with the total amount (text), the original lines and the dinners that use it. With match_products=true, amounts like '3 dl grädde', '2 msk tomatpuré' or '1 gul lök' become an ICA product and package count on the list, and the result's products lists each swap, so a preview shows what will be added; products marked pantry (spices, stock, oil, flour, sugar) are things most kitchens already have, so point them out; pass match_products=true again when committing. In a preview, an ingredient_groups entry with on_list already has that row on the shopping list. To add only some ingredients (the user already has the rest), commit with items set to the ingredient_groups names to add; the others stay off the list. Names in items that match no ingredient group come back in items_not_found; fix them and commit again. This also works for coming dinners already planned: they keep their day. products_skipped "no_store" means no favourite store is set in the ICA app; "store_lookup_failed" means ICA couldn't be reached for the store, so try again later. Either way nothing was matched. When the household has turned on preferring offers, a dinner can have offers: the store's offers it uses, by ingredient - mention those, and a product with offer is the one on sale.
@@ -125,6 +126,35 @@ class GetOffersTool(_ServiceTool):
         "not food, and a dish does not have to use any of them."
     )
     service = "get_offers"
+
+
+class AddToShoppingListTool(_ServiceTool):
+    name = "ica_shopping__AddToShoppingList"
+    title = "Add to the shopping list"
+    description = (
+        "Put groceries on the household's ICA shopping list, which the to-do list follows. "
+        "Skips items already on the list and merges the same item into one row, adding up "
+        "amounts in the same unit; the result says what was added, merged and skipped."
+    )
+    service = "add_items"
+    annotations = _annotations(
+        read_only=False, destructive=False, idempotent=False, open_world=True
+    )
+    parameters = _Schema(
+        {
+            _Required(
+                "items",
+                description="The groceries as the user said them, one per item, with any amount, e.g. 'Potatis 7 st'.",
+            ): [str],
+            _Optional(
+                "allow_similar",
+                description=(
+                    "true only skips items that read exactly like a row, and adds the rest as "
+                    "their own rows. Use it when the user wants a skipped or merged item anyway."
+                ),
+            ): bool,
+        }
+    )
 
 
 class GetMemoryTool(_ServiceTool):
@@ -487,6 +517,7 @@ class ClearMemoryTool(_ServiceTool):
 
 
 TOOLS: list[Tool] = [
+    AddToShoppingListTool(),
     GetOffersTool(),
     GetMemoryTool(),
     PlanDinnersTool(),

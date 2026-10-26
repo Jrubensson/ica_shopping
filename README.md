@@ -64,6 +64,34 @@ To clear automatically, turn on **Clear checked items after every sync** under S
 
 The old **Remove checked and completed items** option deleted items as soon as they were checked. It is now **Clear checked items after every sync**, and upgrading turns it off so checked items sync as checked. Turn it back on if you prefer the old behavior.
 
+## Adding Items
+
+`ica_shopping.add_items` puts rows on the configured list, but looks at the unchecked rows first, so asking twice doesn't double the list:
+
+```yaml
+actions:
+  - action: ica_shopping.add_items
+    data:
+      items:
+        - Potatis 7 st
+        - Mjölk 1 l
+    response_variable: added
+# added.added: the new rows
+# added.merged: [{item: "Mjölk 1 l", row: "Mjölk", now: "Mjölk 1 l"}]
+# added.skipped: [{item: …, row: the row that has it}]
+```
+
+- An item that reads as a row, in any case, is skipped.
+- The same thing is merged into its row. "Mjölk" and "Mjölk 1 l" make "Mjölk 1 l", and amounts in the same unit add up: "Potatis 7 st" and "Potatis 3 st" make "Potatis 10 st", and "Mjölk 5 dl" and "Mjölk 1 l" make "Mjölk 15 dl". "Mjölk" next to "Mjölk 1 l" is skipped, and so is the same amount said again.
+- An item a row covers the way planning matches rows (see [Dinners and the shopping list](#dinners-and-the-shopping-list)) is skipped: "Lök" covers "Röd lök".
+- The same thing in amounts that don't add up ("Potatis 2 kg" next to "Potatis 7 st") goes on as its own row and is listed in `similar`. So is a percentage: "Mjölk 3%" and "Mjölk 1,5%" are different things.
+- Checked-off rows don't count. A checked-off row reading as the item is checked on again rather than added next to it.
+- `allow_similar: true` only skips items that read as a row, and adds the rest as their own rows.
+
+A merged row is a new row in the old one's place, since ICA's list takes new rows and removals. A dinner tied to the old row is tied to the new one, so `remove_dinner`, `get_list_dinners` and `update_list` still find it. A row you add to, or asked for again, is yours too: `remove_dinner` leaves it on the list. Rows added here go to the to-do entity right away.
+
+The to-do list itself takes what you type, as before. The Assist tool `AddToShoppingList` uses `add_items`, so the voice assistant can tell you what was merged or already there.
+
 ## Example Automation (ICA Refresh)
 
 Since ICA does not push updates, you can refresh the list every X minutes:
@@ -395,7 +423,7 @@ Without an `image`, `save_recipe` takes the picture of ICA's closest recipe to t
 
 When `plan_dinners` puts a dinner's ingredients on the list, the memory notes which rows the dinner needs, and which of those the plan put there rather than finding them on the list already. A summed row ("4.5 dl vispgrädde") belongs to every dinner it was summed from. Rows are matched by their words rather than letter for letter, so "Varmkorv" covers "8 varmkorvar" and "Mjölk" covers "2 dl mjölk (gärna 1,5 %)": planning ties the dinner to that row instead of adding the recipe's line next to it. A row has to name nothing the line doesn't ("Mjölig potatis" doesn't cover "900 g fast potatis"), a row with an amount only covers the same amount, and a plain row doesn't cover a processed kind ("Tomater" and "krossade tomater"). `get_list_dinners` returns, for each coming dinner, the rows planning noted and any other row on the to-do list that has one of its ingredients, so a dashboard can show what each row is for, also for rows typed in by hand.
 
-Rows from planning sort by aisle in the ICA app. ICA only sorts a row by itself when it is a plain grocery name, so a row with an amount ("2 dl vispgrädde") or a product row gets the category ICA has for the bare ingredient, here vispgrädde. An ingredient ICA has no name for goes on uncategorised, as a misspelt row typed by hand does.
+Every row the integration puts on the ICA list sorts by aisle in the ICA app. ICA only sorts a row by itself when it is a plain grocery name, so a row with an amount ("2 dl vispgrädde") or a product row gets the category ICA has for the bare ingredient, here vispgrädde. Rows from the to-do list and `add_items` are looked up by their text without the amount and packaging: "Potatis 7 st" sorts under potatis, "Riven ost 1,5 dl" under riven ost or else ost, and "Sej eller torsk 400 g" under sej. The row text stays as it is. A grocery ICA has no name for goes on uncategorised, as a misspelt row typed in the ICA app does.
 
 `remove_dinner` uses it to clean up: the rows the plan put there come off the list again, except those another coming dinner needs, noted or by its words (they become that dinner's to remove), and those already checked off. Pass `update_list: false` to leave the list as it is. A summed row stays as it is rather than shrinking. `move_dinner` swaps two days in one go. Both change the memory, so the Dinners calendar follows; the **Default calendar** does not.
 
@@ -407,6 +435,7 @@ On Home Assistant 2026.8 and newer the integration contributes its own tools to 
 
 | Tool | |
 |---|---|
+| `ica_shopping__AddToShoppingList` | Put groceries on the shopping list with [`add_items`](#adding-items), skipping what is there and merging the same item into its row |
 | `ica_shopping__GetOffers` | This week's offers at the favourite store, and the bonus balance |
 | `ica_shopping__GetMemory` | Recently eaten dinners and the saved preferences |
 | `ica_shopping__PlanDinners` | Suggest a menu from ICA recipes. `preview: true` returns it without changing the list; commit with `recipes` set to the ids you agreed on, optionally from a `start_date`. Committed dinners go in the Dinners calendar and the **Default calendar** |
@@ -420,7 +449,7 @@ On Home Assistant 2026.8 and newer the integration contributes its own tools to 
 | `ica_shopping__SetPreference` / `RemovePreference` | Remember or drop a food preference that isn't about one ingredient |
 | `ica_shopping__ForgetDinner` / `ClearMemory` | Correct the dinner memory |
 
-They wrap the actions above, so they follow the same rules, and they ship with a short prompt fragment that tells the model to read the offers and the memory before suggesting meals, to plan a dish the user names ("vi äter köttfärssås ikväll") without letting the food rules stop it or commenting on them, and never to add anything before the user agrees. The tools are only offered when an assistant requests the built-in Assist API; on Home Assistant older than 2026.8 they are simply not registered and the actions keep working.
+They wrap the actions above, so they follow the same rules, and they ship with a short prompt fragment that tells the model to add groceries with `AddToShoppingList` rather than to the to-do list directly and to say what was merged or already on the list, to read the offers and the memory before suggesting meals, to plan a dish the user names ("vi äter köttfärssås ikväll") without letting the food rules stop it or commenting on them, and never to add anything before the user agrees. The tools are only offered when an assistant requests the built-in Assist API; on Home Assistant older than 2026.8 they are simply not registered and the actions keep working.
 
 ## Bonus and Offers Sensors
 
