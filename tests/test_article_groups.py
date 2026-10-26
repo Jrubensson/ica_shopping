@@ -1,7 +1,12 @@
 """Rows the integration adds get ICA's aisle category, looked up by the bare grocery name."""
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
+from homeassistant.core import SupportsResponse
+
+from custom_components.ica_shopping import _perform_sync
+from custom_components.ica_shopping.const import DOMAIN
 from custom_components.ica_shopping.ica_api import ICAApi, IcaConnectionError
+from custom_components.ica_shopping.matching import grocery_names
 from custom_components.ica_shopping.recipes import async_add_to_list
 
 ARTICLES = {"articles": [
@@ -9,6 +14,9 @@ ARTICLES = {"articles": [
     {"id": 55192, "name": "gul lök", "pluralName": "gula lökar", "parentId": 4, "parentIdExtended": 4},
     {"id": 10000, "name": "5-minuterssill", "parentId": 6, "parentIdExtended": 15},
     {"id": 1, "name": "utan grupp"},
+    {"id": 2, "name": "potatis", "pluralName": "potatisar", "parentId": 4, "parentIdExtended": 4},
+    {"id": 3, "name": "ost", "pluralName": "", "parentId": 10, "parentIdExtended": 12},
+    {"id": 4, "name": "sej", "pluralName": "", "parentId": 6, "parentIdExtended": 16},
 ]}
 
 
@@ -82,3 +90,49 @@ async def test_planned_rows_are_categorised_and_tracked_by_their_text(hass):
     ]
     assert added == ["4.5 dl vispgrädde", "2 gula lökar"]
     assert on_list == [("4.5 dl vispgrädde", True), ("2 gula lökar", True)]
+
+
+def test_grocery_names_leave_the_amount_out():
+    assert grocery_names("Potatis 7 st") == ["potatis 7 st", "potatis"]
+    assert grocery_names("Potatis 7st")[1:] == ["potatis"]
+    assert grocery_names("Riven ost 1,5 dl")[1:] == ["riven ost", "ost"]
+    assert grocery_names("djupfryst sej eller torsk 400 g")[1:] == ["djupfryst sej", "sej"]
+    assert grocery_names("2 morötter, rivna")[1:] == ["morötter"]
+    assert grocery_names("Yoghurt med vanilj")[1:] == ["yoghurt"]
+    assert grocery_names("4 port ris (gärna fullkorn) eller kokt potatis")[1:] == ["ris"]
+
+
+async def test_a_row_with_an_amount_gets_the_category_of_its_grocery(hass):
+    api = _api(hass)
+    for text in ("Potatis 7 st", "7st potatisar", "Riven ost 1,5 dl", "Djupfryst sej eller torsk 400 g"):
+        await api.add_to_list("LIST", text, name=text)
+    assert [(r["productName"], r["articleGroupId"], r["articleGroupIdExtended"]) for r in _sent(api)] == [
+        ("Potatis 7 st", 4, 4),
+        ("7st potatisar", 4, 4),
+        ("Riven ost 1,5 dl", 10, 12),
+        ("Djupfryst sej eller torsk 400 g", 6, 16),
+    ]
+
+
+async def test_rows_from_the_todo_list_are_categorised_by_their_text(hass):
+    """The voice assistant and the dashboard add to the to-do list; the sync carries the rows to ICA."""
+    hass.data[DOMAIN] = {}
+
+    async def get_items(call):
+        return {"todo.handla": {"items": [
+            {"uid": "1", "summary": "Potatis 7 st", "status": "needs_action"},
+            {"uid": "2", "summary": "Mjölk", "status": "completed"},
+        ]}}
+
+    hass.services.async_register("todo", "get_items", get_items, supports_response=SupportsResponse.ONLY)
+    api = MagicMock()
+    api.get_list_by_id = AsyncMock(return_value={"id": "LIST", "rows": []})
+    api.add_to_list = AsyncMock(return_value=True)
+    entry = MagicMock(options={"todo_entity_id": "todo.handla", "ica_list_id": "LIST"}, data={})
+
+    await _perform_sync(hass, api, entry)
+
+    assert sorted((c.args[1], c.kwargs["striked"], c.kwargs["name"]) for c in api.add_to_list.await_args_list) == [
+        ("Mjölk", True, "Mjölk"),
+        ("Potatis 7 st", False, "Potatis 7 st"),
+    ]

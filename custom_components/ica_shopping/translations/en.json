@@ -127,6 +127,9 @@
     },
     "recipe_needs_title": {
       "message": "A new own recipe needs a title."
+    },
+    "add_items_failed": {
+      "message": "Couldn't read the ICA shopping list, so nothing was added. Try again."
     }
   },
   "services": {
@@ -137,6 +140,20 @@
     "clear_checked": {
       "name": "Clear checked items",
       "description": "Sync, then delete checked-off rows from the ICA list and completed items from the to-do list."
+    },
+    "add_items": {
+      "name": "Add items",
+      "description": "Add rows to the shopping list, skipping what is already on it and merging the same item into one row.",
+      "fields": {
+        "items": {
+          "name": "Items",
+          "description": "The rows to add, as a list or one per line, e.g. 'Potatis 7 st'."
+        },
+        "allow_similar": {
+          "name": "Allow similar",
+          "description": "Only skip items that read exactly like a row; add the rest as their own rows instead of merging them."
+        }
+      }
     },
     "get_offers": {
       "name": "Get offers",
