@@ -438,9 +438,8 @@ class ICAApi:
             return cached[0]
         session = async_get_clientsession(self.hass)
         try:
-            async with session.get(
-                PUBLIC_TOKEN_URL, headers={"User-Agent": USER_AGENT}, timeout=TIMEOUT
-            ) as resp:
+            # No USER_AGENT for www.ica.se: its bot protection answers 403 to a browser UA from a non-browser client.
+            async with session.get(PUBLIC_TOKEN_URL, timeout=TIMEOUT) as resp:
                 data = await _read_json(resp, "public token")
         except (aiohttp.ClientError, asyncio.TimeoutError) as err:
             raise IcaConnectionError(f"public token: {err}") from err
@@ -531,9 +530,8 @@ class ICAApi:
         session = async_get_clientsession(self.hass)
         try:
             # ica.se redirects /recept/<id>/ to the page with the title in its URL.
-            async with session.get(
-                f"{RECIPE_WEB_URL}/{recipe_id}/", headers={"User-Agent": USER_AGENT}, timeout=TIMEOUT
-            ) as resp:
+            # HA's own UA, as for the public token: www.ica.se answers 403 to USER_AGENT.
+            async with session.get(f"{RECIPE_WEB_URL}/{recipe_id}/", timeout=TIMEOUT) as resp:
                 if resp.status != 200:
                     # Not cached: the next plan tries again
                     _LOGGER.debug("ica.se answered %s for the tags of recipe %s", resp.status, recipe_id)

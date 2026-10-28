@@ -12,6 +12,7 @@ from custom_components.ica_shopping.const import (
     DOMAIN,
     PUBLIC_TOKEN_URL,
     RECIPE_SEARCH_URL,
+    USER_AGENT,
 )
 from custom_components.ica_shopping.ica_api import ICAApi, IcaApiError
 from custom_components.ica_shopping.llm import AddDinnerTool, SearchRecipesTool
@@ -46,6 +47,17 @@ async def test_search_uses_the_public_token(hass, aioclient_mock):
     assert len(token_calls) == 1
     assert search_calls[0][1].query == {"url": "/", "query": "lasagne", "skip": "0", "take": "5"}
     assert search_calls[0][3]["Authorization"] == "Bearer tok"
+
+
+async def test_token_request_does_not_pose_as_a_browser(hass, aioclient_mock):
+    aioclient_mock.get(PUBLIC_TOKEN_URL, json=_token())
+    aioclient_mock.get(SEARCH_URL, json=[HIT])
+    api = ICAApi(hass, "199001011234", "pw")
+
+    await api.async_search_recipes("lasagne")
+
+    token_call = next(c for c in aioclient_mock.mock_calls if str(c[1]) == PUBLIC_TOKEN_URL)
+    assert USER_AGENT not in (token_call[3] or {}).values()
 
 
 async def test_search_refreshes_a_rejected_token(hass, aioclient_mock):
