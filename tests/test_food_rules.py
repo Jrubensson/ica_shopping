@@ -9,7 +9,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.ica_shopping import async_setup
 from custom_components.ica_shopping.calendar import _to_event
-from custom_components.ica_shopping.const import DATA_ICA, DOMAIN, RECIPE_WEB_URL
+from custom_components.ica_shopping.const import DATA_ICA, DOMAIN, RECIPE_WEB_URL, USER_AGENT
 from custom_components.ica_shopping.ica_api import ICAApi
 from custom_components.ica_shopping.llm import SetFoodRuleTool, SetRecipeVariantTool
 from custom_components.ica_shopping.memory import DinnerMemory
@@ -342,6 +342,7 @@ async def test_tags_come_from_the_recipe_page_and_are_cached(hass, aioclient_moc
     assert tags == [{"name": "Protein", "value": "Fläsk"}, {"name": VEG, "value": "Lök"}]
     await api.async_get_recipe_categories({"id": 740434})
     assert aioclient_mock.call_count == 1
+    assert USER_AGENT not in (aioclient_mock.mock_calls[0][3] or {}).values()
 
 
 async def test_tags_on_the_recipe_are_used_as_they_are(hass, aioclient_mock):
