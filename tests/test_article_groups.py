@@ -84,7 +84,7 @@ async def test_planned_rows_are_categorised_and_tracked_by_their_text(hass):
         "custom_components.ica_shopping.recipes.async_resolve_or_create_list",
         AsyncMock(return_value={"id": "LIST", "name": "Handla", "rows": []}),
     ), patch.object(api, "async_get_list", AsyncMock(return_value=None)):
-        _, added, _, on_list = await async_add_to_list(api, planned, None, "LIST")
+        _, added, _, on_list, _ = await async_add_to_list(api, planned, None, "LIST")
     assert [(r["productName"], r["articleGroupId"]) for r in _sent(api)] == [
         ("4.5 dl vispgrädde", 10), ("2 gula lökar", 4),
     ]

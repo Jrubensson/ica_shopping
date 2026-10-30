@@ -350,8 +350,52 @@ def is_pantry(product: dict) -> bool:
 
 
 def product_text(name: str, count: int, needed: str) -> str:
-    """'2 × Mjölk 3% 1l ICA (14 dl mjölk)'; the amount keeps two plans' rows for one product apart."""
+    """'2 × Mjölk 3% 1l ICA (14 dl mjölk)'; the amounts say which dinners' needs the row has."""
     return f"{name if count == 1 else f'{count} × {name}'} ({needed})"
+
+
+_PRODUCT_ROW = re.compile(r"^(?:(\d+) × )?(.+) \(([^()]+)\)$")
+
+
+def product_row(text: str) -> tuple[str, int, list[str]] | None:
+    """(product, count, amounts needed) of a row product_text() wrote, or None."""
+    if not (match := _PRODUCT_ROW.match(text or "")):
+        return None
+    return match.group(2), int(match.group(1) or 1), match.group(3).split(" + ")
+
+
+def measure(name: str, quantity: float, unit: str | None) -> tuple[tuple | None, tuple | None]:
+    """(to_base(), small_measure()) of an amount; one of them is None, or both when the unit
+    is unknown. Cloves count as a pinch, since one bulb of garlic has plenty."""
+    base = to_base(quantity, unit)
+    small = None if base else small_measure(quantity, unit)
+    if _CLOVES.search(fold(name)) and small and small[0] == "piece":
+        small = ("pinch", small[1])
+    return base, small
+
+
+def amounts(base: tuple | None, small: tuple | None, count: int) -> dict:
+    """What package_count() adds up for one amount."""
+    return {
+        # Spoons and portions are already in ml or g, so they add up with weighed amounts.
+        "_needed": base[1] if base else small[1] if small and small[0] == "measure" else None,
+        "_pieces": small[1] if small and small[0] == "piece" else None,
+        "_packages": count if small and small[0] == "package" else None,
+    }
+
+
+def package_count(product: str, needed: list[dict], fallback: int | None) -> int | None:
+    """How many of `product` cover the amounts() together; `fallback` when they don't add up
+    in its size."""
+    size = package_size(product)
+    pieces = package_pieces(product)
+    if size and all(r["_needed"] is not None for r in needed):
+        return max(1, math.ceil(round(sum(r["_needed"] for r in needed) / size[1], 6)))
+    if pieces and all(r["_pieces"] is not None for r in needed):
+        return max(1, math.ceil(round(sum(r["_pieces"] for r in needed) / pieces, 6)))
+    if all(r["_packages"] is not None for r in needed):
+        return sum(r["_packages"] for r in needed)
+    return fallback
 
 
 async def async_match_products(
@@ -366,10 +410,7 @@ async def async_match_products(
     semaphore = asyncio.Semaphore(PARALLEL_SEARCHES)
 
     async def match(item: dict) -> dict | None:
-        base = to_base(item["quantity"], item.get("unit"))
-        small = None if base else small_measure(item["quantity"], item.get("unit"))
-        if _CLOVES.search(fold(item["name"])) and small and small[0] == "piece":
-            small = ("pinch", small[1])
+        base, small = measure(item["name"], item["quantity"], item.get("unit"))
         query = search_query(item["name"])
         if (base is None and small is None) or not query:
             return None
@@ -408,10 +449,7 @@ async def async_match_products(
             "url": product.get("friendlyUrl"),
             "image": product.get("image"),
             "pantry": is_pantry(product),
-            # Spoons and portions are already in ml or g, so they add up with weighed amounts.
-            "_needed": base[1] if base else small[1] if small[0] == "measure" else None,
-            "_pieces": small[1] if small and small[0] == "piece" else None,
-            "_packages": count if small and small[0] == "package" else None,
+            **amounts(base, small, count),
         }
         if offer := offered.get(_ean(product.get("gtin"))):
             result["offer"] = offer
@@ -435,16 +473,7 @@ async def async_match_products(
     for shared in by_product.values():
         if len(shared) < 2:
             continue
-        size = package_size(shared[0]["product"])
-        pieces = package_pieces(shared[0]["product"])
-        if size and all(r["_needed"] is not None for r in shared):
-            count = max(1, math.ceil(round(sum(r["_needed"] for r in shared) / size[1], 6)))
-        elif pieces and all(r["_pieces"] is not None for r in shared):
-            count = max(1, math.ceil(round(sum(r["_pieces"] for r in shared) / pieces, 6)))
-        elif all(r["_packages"] is not None for r in shared):
-            count = sum(r["_packages"] for r in shared)
-        else:
-            count = max(r["count"] for r in shared)
+        count = package_count(shared[0]["product"], shared, max(r["count"] for r in shared))
         needed = " + ".join(r["needed"] for r in shared)
         for result in shared:
             result["count"] = count

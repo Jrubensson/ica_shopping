@@ -4,15 +4,24 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import math
 import random
 import re
 from typing import Iterable
 
 from .const import MAX_ICA_ITEMS, RECIPE_IMAGE_BASE
 from .ica_api import ICAApi, IcaApiError, IcaError, list_matches
-from .matching import covers, merge, same
+from .matching import add_up, covers, merge, same, shopping_name
 from .memory import LEFT_OFF_KEY, is_custom_id, is_own_id
-from .products import async_match_products, offer_for
+from .products import (
+    amounts,
+    async_match_products,
+    measure,
+    offer_for,
+    package_count,
+    product_row,
+    product_text,
+)
 from .rules import LEVEL_NEVER, adjust, fold, is_theme, mentions, touched_rules
 
 _LOGGER = logging.getLogger(__name__)
@@ -79,6 +88,35 @@ def summed_ingredients(recipes: list[dict], skip_names: Iterable[str] = ()) -> l
         name = _ingredient_name(ings[0])
         out.append({"name": name, "text": _summed_text(name, ings), "quantity": amount[0], "unit": amount[1]})
     return out
+
+
+def _renamed(text: str, name: str, to: str) -> str:
+    """A line with its grocery's name swapped: "2 dl riven tacoost" is "2 dl riven ost"."""
+    if to == name:
+        return text
+    found = re.search(rf"(?:\b(?:fin|grov)?rivn?[ae]n?\s+)?{re.escape(name)}", text or "", re.IGNORECASE)
+    return text[: found.start()] + to + text[found.end():] if found else text
+
+
+def for_shopping(recipe: dict) -> dict:
+    """The recipe with its groceries named as the household buys them (shopping_name()), so
+    one recipe's tacoost and another's riven ost add up to one amount."""
+    groups = []
+    for grp in recipe.get("ingredientGroups") or []:
+        ings = []
+        for ing in grp.get("ingredients") or []:
+            if isinstance(ing, dict) and (name := _ingredient_name(ing)) and (to := shopping_name(name)) != name:
+                ing = {**ing, "ingredient": to, "text": _renamed(ing.get("text") or name, name, to)}
+            ings.append(ing)
+        groups.append({**grp, "ingredients": ings})
+    return {**recipe, "ingredientGroups": groups}
+
+
+def shopping_line(line: str) -> dict:
+    """An ingredient line as planning puts it on the list: {name, text}, named for shopping."""
+    name = own_ingredient(line)["ingredient"]
+    to = shopping_name(name)
+    return {"name": to, "text": _renamed(line, name, to)}
 
 
 def _distinct_lines(ings: list[dict]) -> list[str]:
@@ -455,24 +493,117 @@ async def _async_rows_now(api: ICAApi, list_ref: str | None, default_list_id: st
         return None
 
 
-def _mark_on_list(groups: list[dict], planned: list[dict], rows: list[str]) -> None:
+def _mark_on_list(
+    groups: list[dict], planned: list[dict], rows: list[str], shared: Iterable[str] = ()
+) -> None:
     """Give each ingredient group the row that already covers it ("on_list"), when one row
-    covers everything the plan would add for it."""
+    covers everything the plan would add for it. An amount that adds to a `shared` row isn't
+    covered, as committing adds it there."""
+    shared_rows = [r for r in rows if norm(r) in {norm(s) for s in shared}]
     for group in groups:
         mine = [ing for ing in planned if norm(ing["name"]) == norm(group["name"])]
-        found = [covering_row(rows, ing) for ing in mine]
+        found = [
+            None if any(add_to_row(r, ing["text"]) for r in shared_rows) else covering_row(rows, ing)
+            for ing in mine
+        ]
         if found and all(found):
             group["on_list"] = found[0]
 
 
+def _needed_amounts(part: str) -> dict | None:
+    """What package_count() adds up for one amount a product row is bought for."""
+    ing = own_ingredient(part)
+    if not isinstance(ing.get("quantity"), (int, float)):
+        return None
+    base, small = measure(ing["ingredient"], ing["quantity"], ing.get("unit"))
+    if base is None and small is None:
+        return None
+    return amounts(base, small, max(1, math.ceil(ing["quantity"])))
+
+
+def add_to_row(row: str, item: str, less: bool = False) -> str | None:
+    """A plan's row with another plan's amount added, or taken off again with `less`.
+
+    Plain rows add up as add_up() does: "3 dl vispgrädde" and "4.5 dl vispgrädde" make
+    "7.5 dl vispgrädde". A product row takes the same product's row, or a line of what it is
+    bought for, and counts its packages again: "Matlagningsgrädde 13% 5dl ICA (3.5 dl
+    matlagningsgrädde)" and "2.5 dl matlagningsgrädde" make "2 × Matlagningsgrädde 13% 5dl ICA
+    (6 dl matlagningsgrädde)". "" when nothing is left, None when they don't add up, in the
+    package's size too: 900 g and 8 potatoes stay two rows.
+    """
+    if (product := product_row(row)) is None:
+        return add_up(row, item, less)
+    name, count, parts = product
+    if (other := product_row(item)) is not None:
+        if less or fold(other[0]) != fold(name):
+            return None
+        more = other[2]
+    elif any(same(part, item) for part in parts):
+        more = [item]
+    else:
+        return None
+    parts = list(parts)
+    for part in more:
+        i = next((i for i, p in enumerate(parts) if add_up(p, part, less) is not None), None)
+        if i is not None:
+            parts[i] = add_up(parts[i], part, less)
+        elif less:
+            return None
+        else:
+            parts.append(part)
+    if not (parts := [p for p in parts if p]):
+        return ""
+    needed = [_needed_amounts(p) for p in parts]
+    # Taken off, a row that didn't add up keeps its count
+    if None in needed or (count := package_count(name, needed, count if less else None)) is None:
+        return None
+    return product_text(name, count, " + ".join(parts))
+
+
+_MIXED_NUMBER = re.compile(r"^(\d+)\s+(\d+)/(\d+)\s+(\S.*)$")
+
+
+def plain_line(line: str, first: bool = False) -> str:
+    """A recipe line with its amount and grocery as a plan writes them, to take it off a row
+    again: "2 1/2 dl mellangrädde (27%)" is "2.5 dl matlagningsgrädde". With `first`, only the
+    first of alternatives counts ("250 g körsbärstomater eller småtomater"), for when ICA's
+    name for the grocery leaves the others out; "fisk- eller grönsaksbuljong" is one grocery."""
+    text = re.sub(r"\([^)]*\)", " ", line or "")
+    if first:
+        text = re.split(r"(?<!-)\s+eller\s+", text)[0]
+    text = " ".join(text.split())
+    text = re.sub(r"^ca\.?\s+", "", text, flags=re.IGNORECASE)
+    if match := _MIXED_NUMBER.match(text):
+        whole, top, bottom, rest = match.groups()
+        if not int(bottom):
+            return text
+        ing = {**own_ingredient(f"1 {rest}"), "quantity": int(whole) + int(top) / int(bottom)}
+    else:
+        ing = own_ingredient(text)
+    if not isinstance(ing.get("quantity"), (int, float)):
+        return text
+    name = shopping_name(ing["ingredient"])
+    return " ".join(part for part in (f"{ing['quantity']:g}", ing.get("unit"), name) if part)
+
+
 async def async_add_to_list(
-    api: ICAApi, planned: list[dict], list_ref: str | None, default_list_id: str
-) -> tuple[dict, list[str], list[str], list[tuple[str, bool] | None]]:
+    api: ICAApi,
+    planned: list[dict],
+    list_ref: str | None,
+    default_list_id: str,
+    shared: Iterable[str] = (),
+) -> tuple[dict, list[str], list[str], list[tuple[str, bool] | None], list[dict]]:
     """Add the planned ingredients to the list.
 
-    Returns (list, added, skipped_list_full, on_list): on_list has, for each planned
-    ingredient, the row that covers it now and whether this plan put it there (added or
-    picked up again rather than already on the list), or None when it isn't on the list.
+    `shared` are rows other coming dinners put on the list. An ingredient that adds up with
+    one (add_to_row()) goes into it rather than on a row of its own, as each dinner needs its
+    own amount; ICA's list only takes new rows and removals, so the summed row is a new row
+    in the old one's place.
+
+    Returns (list, added, skipped_list_full, on_list, merged): on_list has, for each planned
+    ingredient, the row that covers it now and whether this plan put it there (added, added
+    to or picked up again rather than already on the list), or None when it isn't on the
+    list. merged has {"item", "row", "now"} for each shared row an ingredient was added to.
     """
     target = await async_resolve_or_create_list(api, list_ref, default_list_id)
     # Re-fetch: the overview may omit rows, and active rows decide what to skip.
@@ -482,15 +613,43 @@ async def async_add_to_list(
     # Key -> the row's text; None for an ingredient left off a full list
     present: dict[str, str | None] = {norm(r["text"]): r["text"] for r in rows if not r.get("isStriked")}
     struck = {norm(r["text"]): r for r in rows if r.get("isStriked") and r.get("id")}
+    # Rows a plan can add to: shared ones on the list now, by key. A summed row is new and has
+    # no id yet, so each row takes one addition per call.
+    open_rows = {
+        key: r for r in rows
+        if not r.get("isStriked") and r.get("id") and (key := norm(r["text"])) in {norm(s) for s in shared}
+    }
     room = MAX_ICA_ITEMS - len(rows)
     added: list[str] = []
     skipped: list[str] = []
+    merged: list[dict] = []
     on_list: list[tuple[str, bool] | None] = []
+    seen: set[str] = set()
     for ing in planned:
         name_key, text_key = norm(ing["name"]), norm(ing["text"])
         # Shares a row with an ingredient left off a full list
         if any(k in present and present[k] is None for k in (name_key, text_key)):
             on_list.append(None)
+            continue
+        # Ingredients sharing one product row add to a shared row once
+        found = None
+        if text_key not in seen:
+            found = next(
+                ((key, now) for key, r in open_rows.items() if (now := add_to_row(r["text"], ing["text"]))), None
+            )
+        seen.add(text_key)
+        if found and await api.add_to_list(target["id"], found[1], name=ing["name"]):
+            key, now = found
+            old = open_rows.pop(key)
+            present[norm(now)] = now
+            if await api.remove_items(target["id"], [old["id"]]):
+                del present[key]
+                merged.append({"item": ing["text"], "row": old["text"], "now": now})
+                on_list[:] = [(now, c[1]) if c and c[0] == old["text"] else c for c in on_list]
+            else:
+                _LOGGER.warning("⚠️ Kunde inte ta bort '%s' efter att ha lagt till '%s'", old["text"], now)
+                added.append(now)
+            on_list.append((now, True))
             continue
         if (row := covering_row((t for t in present.values() if t), ing)) is not None:
             on_list.append((row, False))
@@ -526,7 +685,7 @@ async def async_add_to_list(
         _LOGGER.warning(
             "⚠️ ICA-listan är full (%d rader); hoppade över %d ingredienser", MAX_ICA_ITEMS, len(skipped)
         )
-    return target, added, skipped, on_list
+    return target, added, skipped, on_list, merged
 
 
 async def async_add_items(
@@ -658,6 +817,7 @@ async def async_plan_dinners(
     own_recipes: dict | None = None,
     items: Iterable[str] | None = None,
     offers: list[dict] | None = None,
+    shared: dict[str, list[str]] | None = None,
 ) -> tuple[dict | None, list[dict], dict]:
     """Return (target list, recipes, service response).
 
@@ -680,6 +840,9 @@ async def async_plan_dinners(
     With the store's `offers` (the household opted in), suggestions are drawn from twice as many
     recipes and the ones using an offer go first, matched products prefer the one on offer, and
     each dinner lists the offers it uses in "offers".
+    `shared` has the rows coming dinners put on the list, with those dinners' recipe ids. An
+    amount that adds up with one of another recipe's goes into it (async_add_to_list()),
+    listed in "merged"; a recipe planned again doesn't add to its own.
     """
     rules = list(rules)
     skip_names = {norm(n) for n in never_add}
@@ -697,6 +860,8 @@ async def async_plan_dinners(
         # A stable sort keeps the random order within each half, so offers only tip the scale.
         ranked = sorted(zip(recipes, adjusted, cooked, used), key=lambda row: not row[3])[:count]
         recipes, adjusted, cooked, used = (list(column) for column in zip(*ranked)) if ranked else ([], [], [], [])
+    # Named for shopping once the offers are counted, which match on the recipe's own names
+    cooked = [for_shopping(c) for c in cooked]
     only_custom = bool(recipe_ids) and all(is_custom_id(r) for r in recipe_ids)
     if not recipes and not only_custom:
         raise NoRecipesError(f"No {source} recipes returned")
@@ -731,12 +896,14 @@ async def async_plan_dinners(
 
     if conflicts:
         extra["rule_conflicts"] = conflicts
+    ids = {str(r.get("id")) for r in recipes}
+    open_rows = [row for row, owners in (shared or {}).items() if set(owners) - ids]
 
     if preview or not add_to_list or not recipes:
         groups = group_ingredients(cooked, skip_names)
         if preview and (rows := await _async_rows_now(api, list_ref, default_list_id)) is not None:
             # Every group, chosen or not, so a screen can tick what isn't on the list yet
-            _mark_on_list(groups, everything, rows)
+            _mark_on_list(groups, everything, rows, open_rows)
         return None, recipes, {
             "list": None,
             "preview": preview,
@@ -749,7 +916,11 @@ async def async_plan_dinners(
         }
 
     async with list_lock or contextlib.nullcontext():
-        target, added, skipped, on_list = await async_add_to_list(api, planned, list_ref, default_list_id)
+        target, added, skipped, on_list, merged = await async_add_to_list(
+            api, planned, list_ref, default_list_id, open_rows
+        )
+    if merged:
+        extra["merged"] = merged
     for dinner, rows in zip(dinners, _rows_per_dinner(cooked, planned, on_list)):
         dinner.update({key: value for key, value in rows.items() if value})
     if left_off:

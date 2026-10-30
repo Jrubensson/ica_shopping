@@ -40,9 +40,11 @@ async def test_a_summed_row_is_both_dinners(hass, setup):
     assert the_list.texts() == ["4.5 dl vispgrädde"]
     assert [d["put_on_list"] for d in response["dinners"]] == [["4.5 dl vispgrädde"]] * 2
 
-    # Soppa still needs it
-    assert (await _call(hass, "remove_dinner", date=iso(1)))["list_removed"] == []
-    assert (await _call(hass, "remove_dinner", date=iso(2)))["list_removed"] == ["4.5 dl vispgrädde"]
+    # Soppa still needs its 1.5 dl
+    response = await _call(hass, "remove_dinner", date=iso(1))
+    assert response["list_removed"] == []
+    assert the_list.texts() == ["1.5 dl vispgrädde"]
+    assert (await _call(hass, "remove_dinner", date=iso(2)))["list_removed"] == ["1.5 dl vispgrädde"]
     assert the_list.texts() == []
 
 

@@ -4,8 +4,9 @@ ICA's lines and the rows people keep rarely read the same: "8 varmkorvar" agains
 "2 dl mjölk (gärna 1,5 %)" against "Mjölk", "4 bitar mjukt tunnbröd" against "Mjukt
 tunnbröd". A row covers a line when every word of the row, amounts and packaging left out, is
 in the line: "Mjukt tunnbröd" covers the tunnbröd, but "Mjölig potatis" not "900 g fast
-potatis". A row that states an amount only covers a line with the same amounts, so a second
-plan for "4.5 dl" gets its own row next to one for "3 dl". How it is bought doesn't count
+potatis". A row that states an amount only covers a line with the same amounts; another plan's
+"4.5 dl" adds to a plan's "3 dl" row (add_up()), and next to one the household wrote it gets a
+row of its own. How it is bought doesn't count
 against a row ("Frysta ärtor" covers "250 g ärtor"), and a line for a processed kind
 ("krossade tomater") isn't covered by the plain thing.
 """
@@ -65,6 +66,27 @@ def covers(row: str, line: str) -> bool:
     if not have or not have <= need:
         return False
     return not any(word in _PROCESSED_KEYS for word in need - have)
+
+
+# Groceries recipes name differently that the household buys as one thing, under the name
+# planning uses. Only kinds that stand in for each other in the same amount: a clove of garlic
+# isn't a bulb, and matlagningsgrädde won't whip like vispgrädde.
+SHOPPING_GROUPS = {
+    "riven ost": ("riven ost", "tacoost", "pizzaost", "gratängost", "matlagningsost"),
+    "mjölk": ("mjölk", "standardmjölk", "mellanmjölk", "lättmjölk"),
+    "matlagningsgrädde": ("matlagningsgrädde", "mellangrädde"),
+    "crème fraiche": ("crème fraiche", "creme fraiche", "crème fraîche", "lätt crème fraiche"),
+}
+_GRATED = re.compile(r"\b(?:fin|grov)?rivn?[ae]n?\s+")
+
+
+def shopping_name(name: str) -> str:
+    """The name planning buys a recipe's grocery under: "tacoost" and "riven pizzaost" are
+    riven ost, "mellanmjölk" is mjölk. Any other name stays as it is; "ost" is a block of
+    cheese, not riven ost."""
+    folded = fold(name)
+    core = _GRATED.sub("", folded).strip()
+    return next((to for to, names in SHOPPING_GROUPS.items() if folded in names or core in names), name)
 
 
 def grocery_names(text: str) -> list[str]:
@@ -138,11 +160,30 @@ def merge(row: str, item: str) -> str | None:
         return item
     if have is False or more is False or have[1] != more[1]:
         return None
-    value, _, size, match = have
-    if abs(more[0] * more[2] - value * size) < 1e-9:
+    if abs(more[0] * more[2] - have[0] * have[2]) < 1e-9:
         # The same amount again is the row said again, not twice as much
         return row
-    total = value + more[0] * more[2] / size
+    return _with_total(row, have, more, 1)
+
+
+def add_up(row: str, item: str, less: bool = False) -> str | None:
+    """A plan's row with another plan's amount of the same thing added, or taken off again with
+    `less`: "3 dl vispgrädde" and "4.5 dl vispgrädde" make "7.5 dl vispgrädde", and so do two
+    dinners' "2 purjolökar", unlike merge(), since each dinner needs its own. "" when nothing is
+    left; None when either has no amount or they don't add up."""
+    if not same(row, item):
+        return None
+    have, more = _quantity(row), _quantity(item)
+    if not have or not more or have[1] != more[1]:
+        return None
+    return _with_total(row, have, more, -1 if less else 1)
+
+
+def _with_total(row: str, have: tuple, more: tuple, sign: int) -> str:
+    value, _, size, match = have
+    total = value + sign * more[0] * more[2] / size
+    if total < 1e-9:
+        return ""
     number = f"{total:.3f}".rstrip("0").rstrip(".")
     if "," in match.group(1) or "," in more[3].group(1):
         number = number.replace(".", ",")

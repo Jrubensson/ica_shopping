@@ -58,14 +58,17 @@ from .recipes import (
     NoRecipesError,
     async_plan_dinners,
     entry_description,
+    add_to_row,
     async_add_items,
     async_add_to_list,
     cooked_lines,
     norm as _norm,
     own_ingredient,
+    plain_line,
     search_summary,
+    shopping_line,
 )
-from .matching import covers
+from .matching import covers, shopping_name
 from .rules import LEVEL_OMIT, LEVELS
 
 _LOGGER = logging.getLogger(__name__)
@@ -720,6 +723,7 @@ async def async_setup(hass, config):
                 own_recipes=memory.own_recipes if memory is not None else None,
                 items=_lines(call.data["items"]) if "items" in call.data else None,
                 offers=await _planning_offers(data[DATA_ICA], options),
+                shared=_shared_rows(memory) if memory is not None else None,
             )
         except NoRecipesError as err:
             raise HomeAssistantError(
@@ -736,8 +740,11 @@ async def async_setup(hass, config):
 
         if products_skipped:
             result["products_skipped"] = products_skipped
+        if (merged := result.get("merged")) and memory is not None:
+            # The dinners already on the summed rows keep them under their new text
+            await memory.async_follow_rows({m["row"]: m["now"] for m in merged})
 
-        if not preview and result["added"] and list_matches(target, default_list_id):
+        if not preview and (result["added"] or merged) and list_matches(target, default_list_id):
             # Push the new rows to the to-do entity now instead of on the next refresh.
             await sync()
 
@@ -977,21 +984,23 @@ async def async_setup(hass, config):
                 dinners.append({**_summary(entry), "on_list": found})
         return {"dinners": sorted(dinners, key=lambda d: d["date"])}
 
+    async def _dinner_list(api, list_name: str | None) -> dict | None:
+        """The list a dinner was planned on, with its rows."""
+        lists = await api.async_get_lists()
+        if list_name:
+            target = next((L for L in lists if _norm(L.get("name")) == _norm(list_name)), None)
+        else:
+            target = next((L for L in lists if list_matches(L, hass.data[DOMAIN]["current_list_id"])), None)
+        return None if target is None else await api.async_get_list(target["id"]) or target
+
     async def _remove_list_rows(list_name: str | None, drop: set[str]) -> list[str]:
         """Take the unchecked rows in `drop` (lower-cased) off the list the dinner was planned
         on, and pass the change on to the to-do entity. Returns the rows removed."""
         api = _api_or_raise()
         data = hass.data[DOMAIN]
-        default_id = data["current_list_id"]
         async with data.setdefault("sync_lock", asyncio.Lock()):
-            lists = await api.async_get_lists()
-            if list_name:
-                target = next((L for L in lists if _norm(L.get("name")) == _norm(list_name)), None)
-            else:
-                target = next((L for L in lists if list_matches(L, default_id)), None)
-            if target is None:
+            if (target := await _dinner_list(api, list_name)) is None:
                 return []
-            target = await api.async_get_list(target["id"]) or target
             rows = [
                 r for r in target.get("rows", [])
                 if r.get("id") and not r.get("isStriked") and _norm(r.get("text")) in drop
@@ -1000,9 +1009,59 @@ async def async_setup(hass, config):
                 raise HomeAssistantError(
                     translation_domain=DOMAIN, translation_key="list_update_failed"
                 )
-        if rows and list_matches(target, default_id):
+        if rows and list_matches(target, data["current_list_id"]):
             await _sync_or_raise()()
         return [r["text"] for r in rows]
+
+    async def _replace_list_rows(list_name: str | None, change: dict[str, str]) -> dict[str, str]:
+        """Swap unchecked rows for new text ({old: new}) on the list the dinner was planned on,
+        a new row in each old one's place. Returns the rows swapped."""
+        api = _api_or_raise()
+        data = hass.data[DOMAIN]
+        done: dict[str, str] = {}
+        async with data.setdefault("sync_lock", asyncio.Lock()):
+            if (target := await _dinner_list(api, list_name)) is None:
+                return done
+            by_text = {
+                _norm(r.get("text")): r for r in target.get("rows", [])
+                if r.get("id") and not r.get("isStriked")
+            }
+            for old, new in change.items():
+                if (row := by_text.get(_norm(old))) is None:
+                    continue
+                # On before the old row comes off, so a failure leaves both rather than neither
+                if await api.add_to_list(target["id"], new, name=new):
+                    if not await api.remove_items(target["id"], [row["id"]]):
+                        raise HomeAssistantError(
+                            translation_domain=DOMAIN, translation_key="list_update_failed"
+                        )
+                    done[old] = new
+        if done and list_matches(target, data["current_list_id"]):
+            await _sync_or_raise()()
+        return done
+
+    def _shared_rows(memory: DinnerMemory) -> dict[str, list[str]]:
+        """The rows coming dinners put on the list, with their recipe ids: another dinner's
+        amount of the same thing adds to them."""
+        today = dt_util.now().date().isoformat()
+        rows: dict[str, list[str]] = {}
+        for entry in memory.history:
+            if (entry.get("date") or "") >= today:
+                for row in entry.get("put_on_list") or []:
+                    rows.setdefault(row, []).append(str(entry.get("id")))
+        return rows
+
+    def _less(row: str, lines: Iterable[str]) -> str | None:
+        """A shared row with a dinner's amounts taken off, for the dinners still on it: "7.5 dl
+        vispgrädde" less "3 dl vispgrädde" is "4.5 dl vispgrädde". None when none come off, and
+        a line that would empty the row leaves it, since another dinner needs it."""
+        now = row
+        for line in lines:
+            for text in dict.fromkeys((plain_line(line), plain_line(line, first=True))):
+                if less := add_to_row(now, text, less=True):
+                    now = less
+                    break
+        return None if now == row else now
 
     def _coming(memory: DinnerMemory, recipe_id: str) -> list[dict]:
         """The dinners of a recipe from today on."""
@@ -1017,7 +1076,7 @@ async def async_setup(hass, config):
 
     def _at_home(entry: dict, line: str) -> bool:
         """Whether the household left this line's ingredient off when it shopped for the dinner."""
-        name = own_ingredient(line)["ingredient"]
+        name = shopping_name(own_ingredient(line)["ingredient"])
         return any(_norm(n) == _norm(name) or _has(n, line) for n in entry.get(LEFT_OFF_KEY) or [])
 
     def _needs(entry: dict, memory: DinnerMemory) -> list[str]:
@@ -1036,6 +1095,7 @@ async def async_setup(hass, config):
         today = dt_util.now().date().isoformat()
         added_rows: list[str] = []
         removed_rows: list[str] = []
+        changed_rows: list[dict] = []
         sync = False
         try:
             for entry, old in before:
@@ -1062,20 +1122,32 @@ async def async_setup(hass, config):
                 ]
                 if drop:
                     removed_rows += await _remove_list_rows(entry["list"], {_norm(row) for row in drop})
+                # A row shared with other dinners keeps their amounts, less the gone lines
+                bought = [line for line in gone if not _at_home(entry, line)]
+                less = {
+                    row: now for row in entry.get("put_on_list") or []
+                    if row not in drop and (now := _less(row, bought))
+                }
+                if less and (changed := await _replace_list_rows(entry["list"], less)):
+                    await memory.async_follow_rows(changed)
+                    changed_rows += [{"row": old, "now": new} for old, new in changed.items()]
                 planned = []
                 for line in fresh:
-                    name = own_ingredient(line)["ingredient"]
-                    if _norm(name) not in skip and not _at_home(entry, line):
-                        planned.append({"name": name, "text": line})
+                    ing = shopping_line(line)
+                    if _norm(ing["name"]) not in skip and not _at_home(entry, line):
+                        planned.append(ing)
                 rows: list[tuple[str, bool]] = []
                 if planned:
                     async with data.setdefault("sync_lock", asyncio.Lock()):
-                        target, added, _, on_list = await async_add_to_list(
-                            _api_or_raise(), planned, entry["list"], default_id
+                        target, added, _, on_list, merged = await async_add_to_list(
+                            _api_or_raise(), planned, entry["list"], default_id, _shared_rows(memory)
                         )
+                    if merged:
+                        await memory.async_follow_rows({m["row"]: m["now"] for m in merged})
+                        changed_rows += [{"row": m["row"], "now": m["now"]} for m in merged]
                     rows = [covered for covered in on_list if covered]
                     added_rows += added
-                    sync |= bool(added) and list_matches(target, default_id)
+                    sync |= bool(added or merged) and list_matches(target, default_id)
                 if drop or rows:
                     await memory.async_note_rows(
                         entry,
@@ -1088,7 +1160,10 @@ async def async_setup(hass, config):
             return {"list_added": added_rows, "list_removed": removed_rows, "list_failed": True}
         if sync:
             await _sync_or_raise()()
-        return {"list_added": added_rows, "list_removed": removed_rows}
+        response = {"list_added": added_rows, "list_removed": removed_rows}
+        if changed_rows:
+            response["list_changed"] = changed_rows
+        return response
 
     async def handle_remove_dinner(call: ServiceCall) -> ServiceResponse:
         memory = _memory_or_raise()
@@ -1101,6 +1176,7 @@ async def async_setup(hass, config):
                 translation_placeholders={"uid": date},
             )
         removed_rows: list[str] = []
+        changed: dict[str, str] = {}
         if call.data["update_list"] and entry.get("put_on_list"):
             # Rows another coming dinner needs stay, and become that dinner's to remove: noted
             # when it was planned, or worded so they have one of its ingredients.
@@ -1118,15 +1194,24 @@ async def async_setup(hass, config):
             }
             needed = {row: entries for row, entries in needed.items() if entries}
             drop = {_norm(row) for row in entry["put_on_list"] if row not in needed}
+            # A row the others share keeps their amounts, less this dinner's
+            lines = _needs(entry, memory)
+            less = {row: now for row in needed if (now := _less(row, lines))}
             try:
                 removed_rows = await _remove_list_rows(entry.get("list"), drop)
+                changed = await _replace_list_rows(entry.get("list"), less) if less else {}
             except IcaError as err:
                 raise HomeAssistantError(
                     translation_domain=DOMAIN, translation_key="list_update_failed"
                 ) from err
             await memory.async_hand_over(needed)
+            if changed:
+                await memory.async_follow_rows(changed)
         await memory.async_remove_on(date)
-        return {"removed": _summary(entry), "list_removed": removed_rows}
+        response = {"removed": _summary(entry), "list_removed": removed_rows}
+        if changed:
+            response["list_changed"] = [{"row": old, "now": new} for old, new in changed.items()]
+        return response
 
     async def handle_move_dinner(call: ServiceCall) -> ServiceResponse:
         memory = _memory_or_raise()

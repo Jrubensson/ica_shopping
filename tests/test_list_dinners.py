@@ -47,13 +47,15 @@ async def test_remove_dinner_keeps_rows_another_dinner_needs(hass, setup):
 
     assert response["removed"]["title"] == "Pasta"
     assert response["list_removed"] == ["400 g pasta"]
-    assert the_list.texts() == ["1 gul lök", "4.5 dl vispgrädde", "2 rödlökar"]
-    hass.data[DOMAIN]["sync"].assert_awaited_once()
+    # Soppa's 1.5 dl of the cream stays, without Pasta's 3 dl
+    assert response["list_changed"] == [{"row": "4.5 dl vispgrädde", "now": "1.5 dl vispgrädde"}]
+    assert the_list.texts() == ["1 gul lök", "2 rödlökar", "1.5 dl vispgrädde"]
     assert memory.on(iso(1)) is None
+    assert memory.on(iso(2))["put_on_list"] == ["1.5 dl vispgrädde", "2 rödlökar"]
 
     # The cream Pasta put there is now Soppa's to take off
     response = await _call(hass, "remove_dinner", date=iso(2))
-    assert response["list_removed"] == ["4.5 dl vispgrädde", "2 rödlökar"]
+    assert response["list_removed"] == ["2 rödlökar", "1.5 dl vispgrädde"]
     assert the_list.texts() == ["1 gul lök"]
 
 
